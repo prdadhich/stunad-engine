@@ -1,0 +1,15 @@
+# Build
+/build/
+/out/
+/bin/
+/*.sln
+/*.vcxproj*
+/.vs/
+
+# Qt
+*.user
+*.autosave
+
+# OS
+.DS_Store
+Thumbs.db
