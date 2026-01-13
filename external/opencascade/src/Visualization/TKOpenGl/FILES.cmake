@@ -1,7 +1,0 @@
-# Source files for TKOpenGl
-set(OCCT_TKOpenGl_FILES_LOCATION "${CMAKE_CURRENT_LIST_DIR}")
-
-set(OCCT_TKOpenGl_FILES
-  EXTERNLIB
-  PACKAGES
-)

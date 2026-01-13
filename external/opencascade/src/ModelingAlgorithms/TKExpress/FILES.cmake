@@ -1,7 +1,0 @@
-# Source files for TKExpress
-set(OCCT_TKExpress_FILES_LOCATION "${CMAKE_CURRENT_LIST_DIR}")
-
-set(OCCT_TKExpress_FILES
-  EXTERNLIB
-  PACKAGES
-)
