@@ -1,3 +1,3 @@
-[submodule "external/external/opencascade"]
-	path = external/external/opencascade
+[submodule "external/opencascade"]
+	path = external/opencascade
 	url = https://github.com/Open-Cascade-SAS/OCCT.git
