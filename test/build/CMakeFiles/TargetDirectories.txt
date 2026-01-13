@@ -1,0 +1,3 @@
+C:/Pratyush/stunad-engine/test/build/CMakeFiles/stunad_test.dir
+C:/Pratyush/stunad-engine/test/build/CMakeFiles/ALL_BUILD.dir
+C:/Pratyush/stunad-engine/test/build/CMakeFiles/ZERO_CHECK.dir

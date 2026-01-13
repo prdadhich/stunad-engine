@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Pratyush\stunad-engine\test\build\CMakeFiles\dd308c17acdb0e922a2084e93bc486a8\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{92E680CF-5F09-32B5-9E9F-737B3231805A}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
