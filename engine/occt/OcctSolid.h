@@ -1,5 +1,5 @@
 #pragma once
-#include "../kernel/Solid.h"
+#include "../core/Solid.h"
 #include <TopoDS_Shape.hxx>
 
 class OcctSolid : public Solid

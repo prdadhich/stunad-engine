@@ -1,5 +1,5 @@
 #pragma once
-#include "../kernel/Kernel.h"
+#include "../core/Kernel.h"
 
 class OcctKernel : public Kernel
 {
@@ -8,6 +8,10 @@ public:
 
     Solid* Subtract(Solid* a, Solid* b) override;
     Solid* MakeCylinder(double r, double h) override;
-    Solid* Fillet(Solid* s, double r);
-    Solid* Shell(Solid* s, double t);
+    Solid* Fillet(Solid* s, double r) override;
+    Solid* Shell(Solid* s, double t) override;
+    void ExportSTEP(Solid* s, const char* path) override;
+    Solid* BooleanCut(Solid* a, Solid* b) override;
+    StunadMesh* Tessellate(Solid* solid, float linearDeflection) override;
+
 };
