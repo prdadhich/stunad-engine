@@ -3,6 +3,11 @@ add_library(stunad_engine STATIC
     nodes/LampNode.cpp
     occt/OcctTessellator.cpp 
     extra/MeshPostProcess.cpp
+    extra/GltfExporter.cpp
+    grammar/GrammarExecutor.cpp
+    grammar/GrammarBuilder.cpp
+    grammar/GrammarValidator.cpp
+    ${CMAKE_SOURCE_DIR}/external/tinygltf/tiny_gltf.cc
 )
 
 set(OCCT_ROOT ${CMAKE_SOURCE_DIR}/external/occt_sdk/opencascade-7.9.3-vc14-64)
@@ -10,6 +15,7 @@ set(OCCT_ROOT ${CMAKE_SOURCE_DIR}/external/occt_sdk/opencascade-7.9.3-vc14-64)
 target_include_directories(stunad_engine PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${OCCT_ROOT}/inc
+    ${CMAKE_SOURCE_DIR}/external/tinygltf
 )
 
 target_link_directories(stunad_engine PUBLIC
