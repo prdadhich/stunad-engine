@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-
+#include <string>
 enum class OpType {
 
 
@@ -44,10 +44,12 @@ enum class OpType {
 };
 
 struct Op {
+    std::string id;
     OpType type;
 
-    int a = -1;   // input A
-    int b = -1;   // input B (booleans)
-
+    std::string refA;   // input A
+    std::string refB;// input B (booleans)
+    std::vector<std::string> refList;  //To handle multiple inputs like Loft 
+    std::string selectionRule;
     std::vector<double> params;
 };

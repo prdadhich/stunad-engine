@@ -18,7 +18,14 @@
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
-
+#include <Geom_Line.hxx>     
+#include <gp_Lin.hxx>        
+#include <Standard_Type.hxx>  
+#include <BRepBuilderAPI_GTransform.hxx>
+#include <gp_GTrsf.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <gp_Dir.hxx>
+#include <BRep_Tool.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -38,6 +45,7 @@
 #include <gp_Trsf.hxx>
 #include <Standard_Handle.hxx>
 #include <iostream>
+#include <ShapeFix_Shape.hxx>
 
 Solid* OcctKernel::MakeBox(double x, double y, double z)
 {
@@ -122,13 +130,33 @@ Solid* OcctKernel::BooleanUnion(Solid* a, Solid* b) {
 
 
 
-void OcctKernel::ExportSTEP(Solid* s, const char* path)
-{
-    OcctSolid* occt = (OcctSolid*)s;
+void OcctKernel::ExportSTEP(Solid* s, const char* path) {
+    if (!s) {
+        printf("[OcctKernel] Export Error: Solid is null.\n");
+        return;
+    }
 
+    OcctSolid* occt = static_cast<OcctSolid*>(s);
     STEPControl_Writer writer;
-    writer.Transfer(occt->shape, STEPControl_AsIs);
-    writer.Write(path);
+
+    // IFSelect_RetDone is 0. 
+    // We want to proceed ONLY if status is 0.
+    IFSelect_ReturnStatus transferStat = writer.Transfer(occt->shape, STEPControl_AsIs);
+    
+    if (transferStat != IFSelect_RetDone) {
+        printf("[OcctKernel] STEP Transfer failed with code: %d\n", (int)transferStat);
+        return;
+    }
+
+    printf("[OcctKernel] Shape transferred successfully. Writing to disk...\n");
+
+    IFSelect_ReturnStatus writeStat = writer.Write(path);
+    
+    if (writeStat == IFSelect_RetDone) {
+        printf("[OcctKernel] DONE! File successfully created at: %s\n", path);
+    } else {
+        printf("[OcctKernel] WRITE FAILED! Code: %d. Check if file is open in another app.\n", (int)writeStat);
+    }
 }
 
 Solid* OcctKernel::BooleanCut(Solid* a, Solid* b) 
@@ -140,20 +168,17 @@ Solid* OcctKernel::BooleanCut(Solid* a, Solid* b)
     return new OcctSolid(result);
 }
 
-
 Solid* OcctKernel::Loft(const std::vector<Profile*>& profiles) {
     if (profiles.size() < 2) return nullptr;
 
-    // Parameter 1: isSolid = True
-    // Parameter 2: isRuled = True (Essential for Polygons)
-    BRepOffsetAPI_ThruSections loftMaker(Standard_True, Standard_True);
+    // Standard_True, Standard_True ensures a solid, ruled (straight-edged) shape
+    BRepOffsetAPI_ThruSections loftMaker(Standard_True, Standard_False);
     
     for (Profile* p : profiles) {
         auto* op = static_cast<OcctProfile*>(p);
         if (!op || op->wire.IsNull()) continue;
 
-        // --- HEALING STEP ---
-        // Ensure the wire is topologically clean and flagged as closed
+        // Keep your original wire healing logic
         BRepLib::BuildCurves3d(op->wire);
         op->wire.Closed(Standard_True);
         
@@ -163,14 +188,108 @@ Solid* OcctKernel::Loft(const std::vector<Profile*>& profiles) {
     try {
         loftMaker.Build();
         if (!loftMaker.IsDone() || loftMaker.Shape().IsNull()) {
-            std::cerr << "OCCT Loft Build Failed" << std::endl;
+            printf("[OcctKernel] Loft Build Failed\n");
             return nullptr;
         }
-        return new OcctSolid(loftMaker.Shape());
+
+        // --- NEW: THE HEALER PASS ---
+        // We take the raw shape out of the maker
+        TopoDS_Shape finalShape = loftMaker.Shape();
+        
+        // We use the healer to fix twisted faces or non-manifold edges 
+        // that lofting polygons often creates.
+        HealInternal(finalShape); 
+
+        // Now return the stable container
+        return new OcctSolid(finalShape);
+
     } catch (...) {
+        printf("[OcctKernel] Critical Exception in Loft\n");
         return nullptr;
     }
 }
+
+Solid* OcctKernel::RotateSolid(Solid* s, double rx, double ry, double rz) {
+    auto* occSolid = static_cast<OcctSolid*>(s);
+    if (!occSolid) return nullptr;
+    gp_Trsf trsf;
+
+    // Create rotations for each axis (Euler angles)
+    gp_Trsf rotX, rotY, rotZ;
+    rotX.SetRotation(gp_Ax1(gp::Origin(), gp::DX()), rx * M_PI / 180.0);
+    rotY.SetRotation(gp_Ax1(gp::Origin(), gp::DY()), ry * M_PI / 180.0);
+    rotZ.SetRotation(gp_Ax1(gp::Origin(), gp::DZ()), rz * M_PI / 180.0);
+
+    // Combine transformations: Z * Y * X
+    trsf = rotZ * (rotY * rotX);
+
+    BRepBuilderAPI_Transform transformer(occSolid->shape, trsf);
+    return new OcctSolid(transformer.Shape());
+}
+
+Solid* OcctKernel::ScaleSolid(Solid* s, double factor) {
+    auto* occSolid = static_cast<OcctSolid*>(s);
+    if (!occSolid) return nullptr;
+    if (factor <= 0) return new OcctSolid(occSolid->shape);
+
+    gp_Trsf trsf;
+    trsf.SetScale(gp::Origin(), factor);
+
+    BRepBuilderAPI_Transform transformer(occSolid->shape, trsf);
+    return new OcctSolid(transformer.Shape());
+}
+
+Solid* OcctKernel::BooleanIntersect(Solid* a, Solid* b) {
+    if (!a || !b) return nullptr;
+
+    auto* sa = static_cast<OcctSolid*>(a);
+    auto* sb = static_cast<OcctSolid*>(b);
+
+    BRepAlgoAPI_Common common(sa->shape, sb->shape);
+    common.Build();
+
+    if (!common.IsDone()) {
+        return new OcctSolid(sa->shape); 
+    }
+
+    return new OcctSolid(common.Shape());
+}
+
+
+Solid* OcctKernel::ScaleSolidNonUniform(Solid* s, double sx, double sy, double sz) {
+    auto* occSolid = static_cast<OcctSolid*>(s);
+    
+    if (!occSolid || occSolid->shape.IsNull()) {
+        return nullptr;
+    }
+    // gp_GTrsf is required for non-uniform scaling
+    gp_GTrsf gtrsf;
+    gtrsf.SetVectorialPart(gp_Mat(sx, 0, 0, 
+                                  0, sy, 0, 
+                                  0, 0, sz));
+
+   BRepBuilderAPI_GTransform transformer(occSolid->shape, gtrsf);
+    
+    if (!transformer.IsDone()) {
+        return new OcctSolid(occSolid->shape);
+    }
+
+    return new OcctSolid(transformer.Shape());
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 StunadMesh* OcctKernel::Tessellate(Solid* solid, float deflection)
@@ -324,6 +443,96 @@ Profile* OcctKernel::TranslateProfile(Profile* p, double x, double y, double z) 
 }
 
 
+
+Solid* OcctKernel::FilletByRule(Solid* s, double radius, const std::string& rule) {
+    auto* occSolid = static_cast<OcctSolid*>(s);
+    BRepFilletAPI_MakeFillet filler(occSolid->shape);
+    
+    bool foundAny = false;
+    TopExp_Explorer ex(occSolid->shape, TopAbs_EDGE);
+    
+    while (ex.More()) {
+        TopoDS_Edge E = TopoDS::Edge(ex.Current());
+        
+        bool shouldFillet = false;
+
+        // --- RULE ENGINE ---
+        if (rule == "all_edges") {
+            shouldFillet = true;
+        } 
+        else if (rule == "vertical_edges") {
+            // Logic: Check if edge direction is parallel to Z-axis
+            Standard_Real first, last;
+            Handle(Geom_Curve) curve = BRep_Tool::Curve(E, first, last);
+            if (!curve.IsNull() && curve->IsKind(STANDARD_TYPE(Geom_Line))) {
+                gp_Dir dir = Handle(Geom_Line)::DownCast(curve)->Lin().Direction();
+                if (dir.IsParallel(gp::DZ(), 0.1)) shouldFillet = true;
+            }
+        }
+        else if (rule == "horizontal_edges") {
+             Standard_Real first, last;
+             Handle(Geom_Curve) curve = BRep_Tool::Curve(E, first, last);
+             if (!curve.IsNull() && curve->IsKind(STANDARD_TYPE(Geom_Line))) {
+                gp_Dir dir = Handle(Geom_Line)::DownCast(curve)->Lin().Direction();
+                if (std::abs(dir.Z()) < 0.1) shouldFillet = true;
+             }
+        }
+
+        if (shouldFillet) {
+            filler.Add(radius, E);
+            foundAny = true;
+        }
+        ex.Next();
+    }
+
+    if (!foundAny) return new OcctSolid(occSolid->shape);
+
+    filler.Build();
+    if (filler.IsDone()) {
+        return new OcctSolid(filler.Shape());
+    }
+    return new OcctSolid(occSolid->shape);
+}
+
+
+Solid* OcctKernel::TranslateSolid(Solid* s, double dx, double dy, double dz) {
+    auto* occSolid = static_cast<OcctSolid*>(s);
+    
+    gp_Trsf trsf;
+    trsf.SetTranslation(gp_Vec(dx, dy, dz));
+    
+    BRepBuilderAPI_Transform transformer(occSolid->shape, trsf);
+    if (transformer.IsDone()) {
+        return new OcctSolid(transformer.Shape());
+    }
+    
+    // Fallback: return original if transform fails
+    return new OcctSolid(occSolid->shape);
+}
+
+
+bool OcctKernel::HealInternal(TopoDS_Shape& shape) {
+    BRepCheck_Analyzer analyzer(shape);
+    if (analyzer.IsValid()) return true;
+
+    // printf is okay here since we use it for kernel logging
+    printf("[OcctKernel] Healing invalid geometry...\n");
+
+    ShapeFix_Shape fixer(shape);
+    fixer.Init(shape);
+    fixer.Perform();
+    
+    TopoDS_Shape fixedShape = fixer.Shape();
+    
+    // Check again
+    BRepCheck_Analyzer postAnalyzer(fixedShape);
+    if (postAnalyzer.IsValid()) {
+        shape = fixedShape;
+        return true;
+    }
+    
+    return false; // Even the healer couldn't save it
+}
 
 
 

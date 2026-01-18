@@ -1,153 +1,210 @@
 #include "GrammarExecutor.h"
-#include "../core/Profile.h"
-#include <iostream>
-#include <vector>
+#include <unordered_map>
+#include <memory>
+#include <cstdio>
 
-Solid* GrammarExecutor::execute(
+
+std::unique_ptr<Solid> GrammarExecutor::execute(
     const GrammarProgram& program,
     Kernel& kernel
 ) {
-    if (program.ops.empty()) return nullptr;
+    if (program.ops.empty()) {
+        printf("[Executor] Error: Program is empty.\n");
+        return nullptr;
+        }
 
-    // Pre-allocate vectors to match operation count exactly.
-    // This ensures indices (IDs) from GrammarBuilder align perfectly.
-    std::vector<Solid*> solids(program.ops.size(), nullptr);
-    std::vector<Profile*> profiles(program.ops.size(), nullptr);
+    // Use smart pointers to manage lifetimes automatically and prevent leaks.
+    // Maps store results by their unique string ID.
+    std::unordered_map<std::string, std::unique_ptr<Solid>> solidMap;
+    std::unordered_map<std::string, std::unique_ptr<Profile>> profileMap;
+    printf("[Executor] Executing %zu operations...\n", program.ops.size());
 
-    for (size_t i = 0; i < program.ops.size(); ++i) {
-        const Op& op = program.ops[i];
-        Solid* outSolid = nullptr;
-        Profile* outProfile = nullptr;
-
+    for (const auto& op : program.ops) {
         switch (op.type) {
-            // -------- PROFILES --------
+            // -------- 2D PROFILES --------
             case OpType::CircleProfile:
-                outProfile = kernel.MakeCircleProfile(op.params[0]);
+                profileMap[op.id] = std::unique_ptr<Profile>(kernel.MakeCircleProfile(op.params[0]));
                 break;
 
             case OpType::RectProfile:
-                outProfile = kernel.MakeRectProfile(op.params[0], op.params[1]);
+                profileMap[op.id] = std::unique_ptr<Profile>(kernel.MakeRectProfile(op.params[0], op.params[1]));
                 break;
-
 
             case OpType::PolygonProfile: {
                 std::vector<std::pair<double, double>> points;
                 for (size_t j = 0; j + 1 < op.params.size(); j += 2) {
-                    points.push_back({op.params[j], op.params[j+1]});
+                    points.push_back({op.params[j], op.params[j + 1]});
                 }
-                // Use outProfile instead of profiles[i]
-                outProfile = kernel.MakePolygonProfile(points); 
+                profileMap[op.id] = std::unique_ptr<Profile>(kernel.MakePolygonProfile(points));
                 break;
             }
 
             case OpType::SplineProfile: {
                 std::vector<std::pair<double, double>> points;
                 for (size_t j = 0; j + 1 < op.params.size(); j += 2) {
-                    points.push_back({op.params[j], op.params[j+1]});
+                    points.push_back({op.params[j], op.params[j + 1]});
                 }
-                // FIX: Use 'i' (the loop index)
-                outProfile = kernel.MakeSplineProfile(points);
+                profileMap[op.id] = std::unique_ptr<Profile>(kernel.MakeSplineProfile(points));
                 break;
             }
 
-
-
-            case OpType::ProfileRotate:
-                if (profiles[op.a]) {
-                    outProfile = kernel.RotateProfile(profiles[op.a], op.params[0]);
+            // -------- PROFILE TRANSFORMS --------
+            case OpType::ProfileTranslate:
+                if (profileMap.count(op.refA)) {
+                    profileMap[op.id] = std::unique_ptr<Profile>(kernel.TranslateProfile(
+                        profileMap[op.refA].get(), op.params[0], op.params[1], op.params[2]));
                 }
                 break;
 
-            case OpType::ProfileTranslate:
-                if (profiles[op.a]) {
-                    outProfile = kernel.TranslateProfile(
-                        profiles[op.a], 
-                        op.params[0], op.params[1], op.params[2]
-                    );
+            case OpType::ProfileRotate:
+                if (profileMap.count(op.refA)) {
+                    profileMap[op.id] = std::unique_ptr<Profile>(kernel.RotateProfile(
+                        profileMap[op.refA].get(), op.params[0]));
                 }
                 break;
 
             case OpType::ProfileScale:
-                if (profiles[op.a]) {
-                    outProfile = kernel.ScaleProfile(profiles[op.a], op.params[0]);
+                if (profileMap.count(op.refA)) {
+                    profileMap[op.id] = std::unique_ptr<Profile>(kernel.ScaleProfile(
+                        profileMap[op.refA].get(), op.params[0]));
                 }
                 break;
 
-            // -------- SOLIDS --------
+            // -------- 3D SOLIDS --------
             case OpType::Loft: {
                 std::vector<Profile*> loftProfiles;
-                for (double id : op.params) {
-                    int pIdx = static_cast<int>(id);
-                    // Critical check: ensure the profile exists at that index
-                    if (pIdx >= 0 && pIdx < profiles.size() && profiles[pIdx]) {
-                        loftProfiles.push_back(profiles[pIdx]);
+                // Resolve string IDs from the refList
+                for (const std::string& pId : op.refList) {
+                    if (profileMap.count(pId)) {
+                        loftProfiles.push_back(profileMap[pId].get());
                     }
                 }
-                outSolid = kernel.Loft(loftProfiles);
+                if (!loftProfiles.empty()) {
+                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.Loft(loftProfiles));
+                }
+                else {
+                    fprintf(stderr, "[Executor] Loft Error: No valid profiles found for op %s\n", op.id.c_str());
+                }
                 break;
             }
 
             case OpType::Box:
-                outSolid = kernel.MakeBox(op.params[0], op.params[1], op.params[2]);
+                solidMap[op.id] = std::unique_ptr<Solid>(kernel.MakeBox(op.params[0], op.params[1], op.params[2]));
                 break;
 
             case OpType::Cylinder:
-                outSolid = kernel.MakeCylinder(op.params[0], op.params[1]);
+                solidMap[op.id] = std::unique_ptr<Solid>(kernel.MakeCylinder(op.params[0], op.params[1]));
                 break;
 
             case OpType::Sphere:
-                outSolid = kernel.MakeSphere(op.params[0]);
+                solidMap[op.id] = std::unique_ptr<Solid>(kernel.MakeSphere(op.params[0]));
                 break;
 
             case OpType::Cone:
-                // params[0] = r1, params[1] = r2, params[2] = height
-                outSolid = kernel.MakeCone(op.params[0], op.params[1], op.params[2]);
+                solidMap[op.id] = std::unique_ptr<Solid>(kernel.MakeCone(op.params[0], op.params[1], op.params[2]));
                 break;
 
+            // -------- MODIFIERS & BOOLEANS --------
             case OpType::Shell:
-                if (solids[op.a]) {
-                    outSolid = kernel.Shell(solids[op.a], op.params[0]);
+                if (solidMap.count(op.refA)) {
+                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.Shell(solidMap[op.refA].get(), op.params[0]));
                 }
                 break;
 
             case OpType::Fillet:
-                if (solids[op.a]) {
-                    outSolid = kernel.Fillet(solids[op.a], op.params[0]);
+                if (solidMap.count(op.refA)) {
+                    // Logic for adaptive selection rule
+                    if (!op.selectionRule.empty()) {
+                        // This calls your new adaptive kernel method
+                        solidMap[op.id] = std::unique_ptr<Solid>(kernel.FilletByRule(
+                            solidMap[op.refA].get(), op.params[0], op.selectionRule));
+                    } else {
+                        // Standard fillet
+                        solidMap[op.id] = std::unique_ptr<Solid>(kernel.Fillet(
+                            solidMap[op.refA].get(), op.params[0]));
+                    }
                 }
                 break;
 
             case OpType::Cut:
-                if (solids[op.a] && solids[op.b]) {
-                    outSolid = kernel.BooleanCut(solids[op.a], solids[op.b]);
+                if (solidMap.count(op.refA) && solidMap.count(op.refB)) {
+                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.BooleanCut(
+                        solidMap[op.refA].get(), solidMap[op.refB].get()));
                 }
                 break;
 
-           case OpType::Union:
-                if (solids[op.a] && solids[op.b]) {
-                    outSolid = kernel.BooleanUnion(solids[op.a], solids[op.b]);
+            case OpType::Union:
+                if (solidMap.count(op.refA) && solidMap.count(op.refB)) {
+                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.BooleanUnion(
+                        solidMap[op.refA].get(), solidMap[op.refB].get()));
                 }
                 break;
 
-            // -------- TRANSFORMS (SOLIDS) --------
             case OpType::Translate:
-                // You may need kernel.TranslateSolid(solids[op.a], x, y, z)
+                if (solidMap.count(op.refA)) {
+                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.TranslateSolid(
+                        solidMap[op.refA].get(), op.params[0], op.params[1], op.params[2]));
+                }
                 break;
 
-            default:
+            case OpType::Rotate:
+                if (solidMap.count(op.refA)) {
+                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.RotateSolid(
+                        solidMap[op.refA].get(), op.params[0], op.params[1], op.params[2]));
+                }
                 break;
+
+            case OpType::Scale:
+                if (solidMap.count(op.refA)) {
+                    if (op.params.size() >= 3) {
+                        // Non-Uniform Scaling (X, Y, Z)
+                        solidMap[op.id] = std::unique_ptr<Solid>(kernel.ScaleSolidNonUniform(
+                            solidMap[op.refA].get(), op.params[0], op.params[1], op.params[2]));
+                    } else {
+                        // Uniform Scaling
+                        solidMap[op.id] = std::unique_ptr<Solid>(kernel.ScaleSolid(
+                            solidMap[op.refA].get(), op.params[0]));
+                    }
+                }
+                break;
+                
+                        case OpType::Intersect:
+                if (solidMap.count(op.refA) && solidMap.count(op.refB)) {
+                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.BooleanIntersect(
+                        solidMap[op.refA].get(), solidMap[op.refB].get()));
+                }
+                break;
+
+        
         }
 
-        // Store the results in the indexed slots
-        solids[i] = outSolid;
-        profiles[i] = outProfile;
-    }
-
-    // Return the last valid solid produced by the program
-    for (int i = (int)solids.size() - 1; i >= 0; --i) {
-        if (solids[i] != nullptr) {
-            return solids[i];
+        if (solidMap.count(op.id)) {
+            if (solidMap[op.id] == nullptr) {
+                fprintf(stderr, "FAILED (Kernel returned null solid)\n");
+                return nullptr; // Exit early so we don't crash later
+            }
+            printf("SUCCESS (Solid)\n");
+        } 
+        else if (profileMap.count(op.id)) {
+            if (profileMap[op.id] == nullptr) {
+                fprintf(stderr, "FAILED (Kernel returned null profile)\n");
+                return nullptr;
+            }
+            printf("SUCCESS (Profile)\n");
+        } 
+        else {
+            fprintf(stderr, "FAILED (Operation not handled or missing inputs)\n");
+            return nullptr;
         }
     }
 
-    return nullptr;
+
+    // Return the final result. 
+    // Usually, the caller expects a raw pointer they now own.
+    if (solidMap.empty()) return nullptr;
+    
+    // Get the last operation's solid. .get() returns the raw pointer.
+    // Note: In a production environment, you might return the unique_ptr 
+    // or ensure the Kernel manages the lifetime of this specific returned object.
+    return std::move(solidMap[program.ops.back().id]);
 }

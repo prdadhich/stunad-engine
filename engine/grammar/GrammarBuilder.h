@@ -1,49 +1,52 @@
 #pragma once
 #include "GrammarProgram.h"
-
+#include <vector>
+#include <string>
 class GrammarBuilder {
 public:
 
     //profile
-    int CircleProfile(double radius);
-    int RectProfile(double x, double y);
+    std::string CircleProfile(double radius);
+    std::string RectProfile(double x, double y);
 
 
     // profile transforms
-    int TranslateProfile(int profile, double x, double y, double z);
-    int RotateProfile(int profile, double angleDeg);
-    int ScaleProfile(int profile, double s);
-    int PolygonProfile(const std::vector<std::pair<double, double>>& points);
-    int SplineProfile(const std::vector<std::pair<double, double>>& points);
+    std::string TranslateProfile(std::string profile, double x, double y, double z);
+    std::string RotateProfile(std::string profile, double angleDeg);
+    std::string ScaleProfile(std::string profile, double s);
+    std::string PolygonProfile(const std::vector<std::pair<double, double>>& points);
+    std::string SplineProfile(const std::vector<std::pair<double, double>>& points);
 
     //solid from profile
-    int Loft(const std::vector<int>& profiles);
+   std::string Loft(const std::vector<std::string>& profileIds);
 
 
     //basic solids
     
-    int Box(double x, double y, double z);
-    int Cylinder(double r, double h);
-    int Sphere(double r);
-    int Cone(double rBottom, double rTop, double height);
-    int Shell(int solid, double t);
-    int Fillet(int solid, double r);
+    std::string Box(double x, double y, double z);
+    std::string Cylinder(double r, double h);
+    std::string Sphere(double r);
+    std::string Cone(double rBottom, double rTop, double height);
+    std::string Shell(std::string solid, double t);
+    std::string Fillet(std::string solidId, std::string rule, double radius);
 
-    int Union(int a, int b);
-    int Cut(int a, int b);
-    int Intersect(int a, int b);
+    std::string Union(std::string a, std::string b);
+    std::string Cut(std::string baseId, std::string toolId);
+    std::string Intersect(std::string a, std::string b);
 
-    int Translate(int solid, double x, double y, double z);
-    int Rotate(int solid, double rx, double ry, double rz);
-    int Scale(int solid, double s);
-
+    std::string Translate(std::string solid, double x, double y, double z);
+    std::string Rotate(std::string solid, double rx, double ry, double rz);
+    std::string Scale(std::string solid, double s);
+    std::string Scale(std::string solid, double sx, double sy, double sz);
     const GrammarProgram& program() const;
 
 private:
     GrammarProgram prog;
 
-    int push(OpType type,
-             int a = -1,
-             int b = -1,
-             std::vector<double> params = {});
+    std::string push(OpType type, 
+                     std::string a = "", 
+                     std::string b = "", 
+                     std::vector<double> params = {}, 
+                     std::vector<std::string> refList = {},
+                     std::string rule = "");
 };

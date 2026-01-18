@@ -1,116 +1,129 @@
 #include "GrammarBuilder.h"
 
-int GrammarBuilder::push(OpType type, int a, int b, std::vector<double> params) {
-    prog.ops.push_back({type, a, b, params});
-    return int(prog.ops.size() - 1);
+std::string GrammarBuilder::push(OpType type, std::string a, std::string b, 
+                                 std::vector<double> params, 
+                                 std::vector<std::string> refList,
+                                 std::string rule) { 
+    Op op;
+    op.type = type;
+    op.refA = a;
+    op.refB = b;
+    op.params = params;
+    op.refList = refList;
+    op.selectionRule = rule; // <--- Store rule
+    op.id = "op_" + std::to_string(prog.ops.size());
+    
+    prog.ops.push_back(op);
+    return op.id;
+}
+// --- 3D PRIMITIVES ---
+
+std::string GrammarBuilder::Box(double x, double y, double z) {
+    return push(OpType::Box, "", "", {x, y, z});
 }
 
-int GrammarBuilder::Box(double x, double y, double z) {
-    return push(OpType::Box, -1, -1, {x, y, z});
+std::string GrammarBuilder::Cylinder(double r, double h) {
+    return push(OpType::Cylinder, "", "", {r, h});
 }
 
-int GrammarBuilder::Cylinder(double r, double h) {
-    return push(OpType::Cylinder, -1, -1, {r, h});
+std::string GrammarBuilder::Sphere(double r) {
+    return push(OpType::Sphere, "", "", {r});
 }
 
-int GrammarBuilder::Sphere(double r) {
-    return push(OpType::Sphere, -1, -1, {r});
-}
-int GrammarBuilder::Cone(double rBottom, double rTop, double height) {
-   
-    return push(OpType::Cone, -1, -1, {rBottom, rTop, height});
+std::string GrammarBuilder::Cone(double rBottom, double rTop, double height) {
+    return push(OpType::Cone, "", "", {rBottom, rTop, height});
 }
 
-int GrammarBuilder::Shell(int solid, double t) {
-    return push(OpType::Shell, solid, -1, {t});
+// --- MODIFIERS & BOOLEANS ---
+
+std::string GrammarBuilder::Shell(std::string solid, double t) {
+    return push(OpType::Shell, solid, "", {t});
 }
 
-int GrammarBuilder::Fillet(int solid, double r) {
-    return push(OpType::Fillet, solid, -1, {r});
+std::string GrammarBuilder::Fillet(std::string solidId, std::string rule, double radius) {
+    // Correctly passing the rule into the selectionRule parameter of push
+    return push(OpType::Fillet, solidId, "", {radius}, {}, rule);
 }
 
-int GrammarBuilder::Union(int a, int b) {
+std::string GrammarBuilder::Union(std::string a, std::string b) {
     return push(OpType::Union, a, b);
 }
 
-int GrammarBuilder::Cut(int a, int b) {
-    return push(OpType::Cut, a, b);
+std::string GrammarBuilder::Cut(std::string baseId, std::string toolId) {
+    return push(OpType::Cut, baseId, toolId);
 }
 
-int GrammarBuilder::Intersect(int a, int b) {
+std::string GrammarBuilder::Intersect(std::string a, std::string b) {
     return push(OpType::Intersect, a, b);
 }
 
-int GrammarBuilder::Translate(int solid, double x, double y, double z) {
-    return push(OpType::Translate, solid, -1, {x, y, z});
+// --- 3D TRANSFORMS ---
+
+std::string GrammarBuilder::Translate(std::string solid, double x, double y, double z) {
+    return push(OpType::Translate, solid, "", {x, y, z});
 }
 
-int GrammarBuilder::Rotate(int solid, double rx, double ry, double rz) {
-    return push(OpType::Rotate, solid, -1, {rx, ry, rz});
+std::string GrammarBuilder::Rotate(std::string solid, double rx, double ry, double rz) {
+    return push(OpType::Rotate, solid, "", {rx, ry, rz});
 }
 
-int GrammarBuilder::Scale(int solid, double s) {
-    return push(OpType::Scale, solid, -1, {s});
+std::string GrammarBuilder::Scale(std::string solid, double s) {
+    return push(OpType::Scale, solid, "", {s});
 }
 
-int GrammarBuilder::CircleProfile(double r) {
-    return push(OpType::CircleProfile, -1, -1, {r});
+std::string GrammarBuilder::Scale(std::string solid, double sx, double sy, double sz) {
+    return push(OpType::Scale, solid, "", {sx, sy, sz}); // Pass all 3 factors
+}
+// --- 2D PROFILES ---
+
+std::string GrammarBuilder::CircleProfile(double r) {
+    return push(OpType::CircleProfile, "", "", {r});
 }
 
-int GrammarBuilder::RectProfile(double x, double y) {
-    return push(OpType::RectProfile, -1, -1, {x, y});
+std::string GrammarBuilder::RectProfile(double x, double y) {
+    return push(OpType::RectProfile, "", "", {x, y});
 }
 
-
-// Helper to flatten points into params
-int GrammarBuilder::PolygonProfile(const std::vector<std::pair<double, double>>& points) {
-    Op op;
-    op.type = OpType::PolygonProfile;
+std::string GrammarBuilder::PolygonProfile(const std::vector<std::pair<double, double>>& points) {
+    std::vector<double> flattenedParams;
+    flattenedParams.reserve(points.size() * 2);
     for (const auto& p : points) {
-        op.params.push_back(p.first);
-        op.params.push_back(p.second);
+        flattenedParams.push_back(p.first);
+        flattenedParams.push_back(p.second);
     }
-    int id = static_cast<int>(prog.ops.size());
-    prog.ops.push_back(op);
-    return id;
+    return push(OpType::PolygonProfile, "", "", flattenedParams);
 }
 
-// Splines use the same flattening logic
-int GrammarBuilder::SplineProfile(const std::vector<std::pair<double, double>>& points) {
-    Op op = {};
-    op.type = OpType::SplineProfile;
+std::string GrammarBuilder::SplineProfile(const std::vector<std::pair<double, double>>& points) {
+    std::vector<double> flattened;
+    flattened.reserve(points.size() * 2);
     for (const auto& p : points) {
-        op.params.push_back(p.first);
-        op.params.push_back(p.second);
+        flattened.push_back(p.first);
+        flattened.push_back(p.second);
     }
-    int id = static_cast<int>(prog.ops.size());
-    prog.ops.push_back(op);
-    return id;
+    return push(OpType::SplineProfile, "", "", flattened);
 }
 
+// --- PROFILE TRANSFORMS ---
 
-
-int GrammarBuilder::TranslateProfile(int p, double x, double y, double z) {
-    return push(OpType::ProfileTranslate, p, -1, {x, y, z});
+std::string GrammarBuilder::TranslateProfile(std::string p, double x, double y, double z) {
+    return push(OpType::ProfileTranslate, p, "", {x, y, z});
 }
 
-int GrammarBuilder::RotateProfile(int p, double angleDeg) {
-    return push(OpType::ProfileRotate, p, -1, {angleDeg});
+std::string GrammarBuilder::RotateProfile(std::string p, double angleDeg) {
+    return push(OpType::ProfileRotate, p, "", {angleDeg});
 }
 
-int GrammarBuilder::ScaleProfile(int p, double s) {
-    return push(OpType::ProfileScale, p, -1, {s});
+std::string GrammarBuilder::ScaleProfile(std::string p, double s) {
+    return push(OpType::ProfileScale, p, "", {s});
 }
 
-int GrammarBuilder::Loft(const std::vector<int>& profiles) {
-    // store profile indices in params as doubles (safe for v0)
-    std::vector<double> ids;
-    for (int i : profiles) ids.push_back(double(i));
-    return push(OpType::Loft, -1, -1, ids);
+// --- COMPLEX OPERATIONS ---
+
+std::string GrammarBuilder::Loft(const std::vector<std::string>& profileIds) {
+    // Uses the refList to store the series of profile IDs for the loft operation
+    return push(OpType::Loft, "", "", {}, profileIds);
 }
-
-
-
 
 const GrammarProgram& GrammarBuilder::program() const {
     return prog;

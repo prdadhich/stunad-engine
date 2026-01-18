@@ -1,152 +1,132 @@
 #include "GrammarValidator.h"
-#include <cfloat>
+#include <unordered_map>
 #include <cmath>
 
 bool GrammarValidator::validate(
     const GrammarProgram& program,
     std::string& error
 ) {
-    int count = program.ops.size();
+    // Tracks the type of each ID (Solid or Profile) as we iterate
+    std::unordered_map<std::string, ValueType> typeMap;
 
-    for (int i = 0; i < count; ++i) {
-        const Op& op = program.ops[i];
-
-        // Check references
-        if (op.a >= i || op.b >= i) {
-            error = "Op references future or invalid index at op " + std::to_string(i);
+    for (const auto& op : program.ops) {
+        // 1. Basic ID Validation
+        if (op.id.empty()) {
+            error = "Operation ID cannot be empty";
+            return false;
+        }
+        if (typeMap.count(op.id)) {
+            error = "Duplicate ID detected: " + op.id;
             return false;
         }
 
-        // Parameter sanity
+        // 2. Reference Validation (Check if refA and refB actually exist)
+        if (!op.refA.empty() && typeMap.find(op.refA) == typeMap.end()) {
+            error = "Op " + op.id + " references undefined ID: " + op.refA;
+            return false;
+        }
+        if (!op.refB.empty() && typeMap.find(op.refB) == typeMap.end()) {
+            error = "Op " + op.id + " references undefined ID: " + op.refB;
+            return false;
+        }
+
+        // 3. Parameter Sanity (Check for NaN or Infinity)
         for (double p : op.params) {
             if (!std::isfinite(p)) {
-                error = "Non-finite parameter at op " + std::to_string(i);
+                error = "Non-finite parameter in op: " + op.id;
                 return false;
             }
         }
 
-        // Op-specific rules (example)
-        if (op.type == OpType::Shell && op.params[0] <= 0) {
-            error = "Shell thickness must be > 0";
-            return false;
-        }
-
-        if (op.type == OpType::Fillet && op.params[0] <= 0) {
-            error = "Fillet radius must be > 0";
-            return false;
-        }
-        if (op.type == OpType::Cut || op.type == OpType::Union || op.type == OpType::Intersect)
-        {
-            if (op.a == op.b) 
-            {
-                error = "Boolean operation cannot use the same solid for both inputs";
-                return false;
-            }
-        }
-
-        if (op.type == OpType::PolygonProfile || op.type == OpType::SplineProfile) {
-            if (op.params.size() < 6) { // Minimum 3 points (x1,y1, x2,y2, x3,y3)
-                error = "Polygon/Spline requires at least 3 points (6 parameters)";
-                return false;
-            }
-            if (op.params.size() % 2 != 0) {
-                error = "Polygon/Spline must have an even number of parameters (x,y pairs)";
-                return false;
-            }
-        }
-
-
+        // 4. Type Checking & Logic Rules
         switch (op.type) {
-
+            // --- 2D Profiles ---
             case OpType::CircleProfile:
-            case OpType::RectProfile:    
-            case OpType::PolygonProfile: 
-            case OpType::SplineProfile:  
-                types.push_back(ValueType::Profile);
+            case OpType::RectProfile:
+            case OpType::PolygonProfile:
+            case OpType::SplineProfile:
+                if (op.type == OpType::PolygonProfile || op.type == OpType::SplineProfile) {
+                    if (op.params.size() < 6 || op.params.size() % 2 != 0) {
+                        error = "Polygon/Spline " + op.id + " requires even number of params (min 6)";
+                        return false;
+                    }
+                }
+                typeMap[op.id] = ValueType::Profile;
                 break;
 
             case OpType::ProfileRotate:
             case OpType::ProfileTranslate:
             case OpType::ProfileScale:
-                if (types[op.a] != ValueType::Profile) {
-                    error = "Profile transform requires Profile input";
+                if (typeMap[op.refA] != ValueType::Profile) {
+                    error = "Transform " + op.id + " requires a Profile input";
                     return false;
                 }
-                types.push_back(ValueType::Profile);
+                typeMap[op.id] = ValueType::Profile;
+                break;
+
+            // --- 3D Solids ---
+            case OpType::Box:
+            case OpType::Cylinder:
+            case OpType::Sphere:
+            case OpType::Cone:
+                typeMap[op.id] = ValueType::Solid;
                 break;
 
             case OpType::Loft:
-                for (double id : op.params) {
-                    if (types[int(id)] != ValueType::Profile) {
-                        error = "Loft requires Profile inputs";
+                if (op.refList.empty()) {
+                    error = "Loft " + op.id + " requires at least one profile in refList";
+                    return false;
+                }
+                for (const std::string& pId : op.refList) {
+                    if (typeMap.find(pId) == typeMap.end() || typeMap[pId] != ValueType::Profile) {
+                        error = "Loft " + op.id + " requires valid Profile IDs in refList";
                         return false;
                     }
                 }
-                types.push_back(ValueType::Solid);
+                typeMap[op.id] = ValueType::Solid;
                 break;
 
             case OpType::Fillet:
             case OpType::Shell:
-                if (types[op.a] != ValueType::Solid) {
-                    error = "Modifier requires Solid input";
+            case OpType::Translate:
+            case OpType::Rotate:
+                if (typeMap[op.refA] != ValueType::Solid) {
+                    error = "Modifier/Transform " + op.id + " requires a Solid input";
                     return false;
                 }
-                types.push_back(ValueType::Solid);
+                typeMap[op.id] = ValueType::Solid;
                 break;
 
-            case OpType::Box:
-            case OpType::Cylinder:
-                types.push_back(ValueType::Solid);
+            case OpType::Scale:
+                if (typeMap[op.refA] != ValueType::Solid) {
+                    error = "Scale " + op.id + " requires a Solid input";
+                    return false;
+                }
+                if (op.params.size() != 1 && op.params.size() != 3) {
+                    error = "Scale " + op.id + " requires either 1 or 3 parameters";
+                    return false;
+                }
+                typeMap[op.id] = ValueType::Solid;
                 break;
-
-            case OpType::Sphere:
-                    if (op.params[0] <= 0) {
-                        error = "Sphere radius must be > 0";
-                        return false;
-                    }
-                    types.push_back(ValueType::Solid);
-                    break;
-
-            case OpType::Cone:
-                    if (op.params[2] <= 0) {
-                        error = "Cone height must be > 0";
-                        return false;
-                    }
-                    types.push_back(ValueType::Solid);
-                    break;
 
             case OpType::Union:
             case OpType::Cut:
             case OpType::Intersect:
-                if (types[op.a] != ValueType::Solid || types[op.b] != ValueType::Solid) {
-                    error = "Boolean operation requires two Solid inputs";
+                if (typeMap[op.refA] != ValueType::Solid || typeMap[op.refB] != ValueType::Solid) {
+                    error = "Boolean " + op.id + " requires two Solid inputs";
                     return false;
                 }
-                types.push_back(ValueType::Solid);
+                if (op.refA == op.refB) {
+                    error = "Boolean " + op.id + " cannot use the same solid twice";
+                    return false;
+                }
+                typeMap[op.id] = ValueType::Solid;
                 break;
 
-
-
-
-
-
-
-
-
-
-
-
-
+            default:
+                error = "Unknown OpType in validator";
+                return false;
         }
-
-
-
-
-
-
-
-
-
     }
 
     return true;

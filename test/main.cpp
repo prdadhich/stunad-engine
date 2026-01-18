@@ -12,54 +12,59 @@
 
 
 int main() {
-    GrammarBuilder g;
+    try {
+        OcctKernel kernel;
+        GrammarBuilder g;
+        GrammarExecutor executor;
 
-    // 1. Bottom: Large 10-pointed Star
-    std::vector<std::pair<double, double>> starPoints;
-    for (int i = 0; i < 10; ++i) {
-        double angle = i * (36.0 * M_PI / 180.0);
-        double r = (i % 2 == 0) ? 20.0 : 10.0;
-        starPoints.push_back({ r * cos(angle), r * sin(angle) });
-    }
-    int bottom = g.PolygonProfile(starPoints);
+        std::cout << "[Main] Generating Complex Vase Recipe..." << std::endl;
 
-    // 2. Middle: Hexagon, Moved up 30, and Rotated 30 degrees
-    std::vector<std::pair<double, double>> hexPoints;
-    for (int i = 0; i < 6; ++i) {
-        double angle = i * (60.0 * M_PI / 180.0);
-        hexPoints.push_back({ 12.0 * cos(angle), 12.0 * sin(angle) });
-    }
-    int mid = g.PolygonProfile(hexPoints);
-    int midTrans = g.TranslateProfile(mid, 0, 0, 30);
-    int midRot = g.RotateProfile(midTrans, 30.0);
+        // 1. Create the Base (A Circle at Z=0)
+        std::string baseCircle = g.CircleProfile(20.0);
 
-    // 3. Top: Circle, Moved up 60
-    int top = g.CircleProfile(8.0);
-    int topTrans = g.TranslateProfile(top, 0, 0, 60);
+        // 2. Create the Mid-Section (A Star/Polygon at Z=40)
+        std::vector<std::pair<double, double>> starPoints;
+        int numPoints = 10;
+        for (int i = 0; i < numPoints; ++i) {
+            double angle = i * (2.0 * M_PI / numPoints);
+            double r = (i % 2 == 0) ? 35.0 : 15.0; 
+            starPoints.push_back({ r * cos(angle), r * sin(angle) });
+        }
+        
+        std::string midStar = g.PolygonProfile(starPoints);
+        std::string midStarRaised = g.TranslateProfile(midStar, 0, 0, 40.0);
 
-    // 4. Create the Solid Loft
-    int vaseSolid = g.Loft({bottom, midRot, topTrans});
+        // 3. Create the Top (A smaller Circle at Z=80)
+        std::string topCircle = g.CircleProfile(15.0);
+        std::string topCircleRaised = g.TranslateProfile(topCircle, 0, 0, 80.0);
 
-    // 5. Hollow it out (Shelling)
-    // Thickness of 2.0 units. 
-    // Note: If this fails, try a smaller thickness like 0.5
-   // int finalVase = g.Shell(vaseSolid, 0.5);
+        // 4. Loft them together
+        // Order matters: Bottom -> Middle -> Top
+        std::string vaseBody = g.Loft({baseCircle, midStarRaised, topCircleRaised});
 
-    // --- Execution ---
-    GrammarExecutor exec;
-    OcctKernel kernel;
-    Solid* result = exec.execute(g.program(), kernel);
+        // 5. Shell it (Hollow the top)
+        // Thickness of 2.0mm. Note: ensure your Kernel::Shell handles 
+        // choosing the 'top' face to remove, or just offsets the whole solid.
+        //std::string hollowVase = g.Shell(vaseBody, 2.0);
 
-    if (result) {
-        kernel.ExportSTEP(result, "hollow_vase.step");
-        printf("COMPLETE SUCCESS: Hollowed complex vase created.\n");
-    } else {
-        printf("SHELL FAILURE: The loft was fine, but the hollowing failed.\n");
+        // 6. Execute
+        std::cout << "[Main] Executing Graph..." << std::endl;
+        std::shared_ptr<Solid> finalResult = executor.execute(g.program(), kernel);
+
+        if (finalResult) {
+            std::cout << "[Main] Exporting Vase..." << std::endl;
+            kernel.ExportSTEP(finalResult.get(), "complex_vase.step");
+            std::cout << "[Main] Done! Check complex_vase.step" << std::endl;
+        } else {
+            std::cerr << "[Main] Execution failed to produce a solid." << std::endl;
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "[Main] Exception: " << e.what() << std::endl;
     }
 
     return 0;
 }
-
 
 
 

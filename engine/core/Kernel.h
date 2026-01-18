@@ -2,6 +2,7 @@
 #include "Solid.h"
 #include "Mesh.h"
 #include "Profile.h"
+#include <string>
 
 class Kernel
 {
@@ -21,6 +22,12 @@ public:
     virtual Solid* BooleanUnion(Solid* a, Solid* b) =0;
     virtual Solid* Loft(const std::vector<Profile*>& profiles) = 0;
     virtual void ExportSTEP(Solid* s, const char* path) = 0;
+    virtual Solid* FilletByRule(Solid* s, double radius, const std::string& rule) =0;
+    virtual Solid* TranslateSolid(Solid* s, double dx, double dy, double dz) = 0;
+    virtual Solid* RotateSolid(Solid* s, double rx, double ry, double rz) = 0;
+    virtual Solid* ScaleSolid(Solid* s, double factor)  = 0 ;
+    virtual Solid* BooleanIntersect(Solid* a, Solid* b) = 0;
+    virtual Solid* ScaleSolidNonUniform(Solid* s, double sx, double sy, double sz) = 0;
 
     
     virtual StunadMesh* Tessellate(Solid* solid, float linearDeflection) = 0;
