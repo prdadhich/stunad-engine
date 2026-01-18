@@ -10,6 +10,7 @@ set(OCCT_ROOT ${CMAKE_SOURCE_DIR}/external/occt_sdk/opencascade-7.9.3-vc14-64)
 
 target_include_directories(stunad_test PRIVATE
     ${OCCT_ROOT}/inc
+    ${CMAKE_SOURCE_DIR}/external/json/include
 )
 
 target_link_directories(stunad_test PRIVATE

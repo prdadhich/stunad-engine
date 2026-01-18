@@ -16,6 +16,7 @@ target_include_directories(stunad_engine PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${OCCT_ROOT}/inc
     ${CMAKE_SOURCE_DIR}/external/tinygltf
+    ${CMAKE_SOURCE_DIR}/external/json/include
 )
 
 target_link_directories(stunad_engine PUBLIC

@@ -3,6 +3,9 @@
 #include "grammar/GrammarExecutor.h"
 #include "grammar/GrammarValidator.h"
 #include "occt/OcctKernel.h"
+#include "extra/MeshPostProcess.h"
+#include "extra/GltfExporter.h"
+#include "nlohmann/json.hpp"
 #include <vector>
 #include <cmath>
 #ifndef M_PI
@@ -11,6 +14,150 @@
 
 
 
+using json = nlohmann::json;
+
+OpType mapType(const std::string& name) {
+    // Profiles
+    if (name == "CircleProfile")   return OpType::CircleProfile;
+    if (name == "RectProfile")     return OpType::RectProfile;
+    if (name == "PolygonProfile")  return OpType::PolygonProfile;
+    if (name == "SplineProfile")   return OpType::SplineProfile;
+
+    // Profile transforms
+    if (name == "ProfileTranslate") return OpType::ProfileTranslate;
+    if (name == "ProfileRotate")    return OpType::ProfileRotate;
+    if (name == "ProfileScale")     return OpType::ProfileScale;
+
+    // Solids/Primitives
+    if (name == "Loft")            return OpType::Loft;
+    if (name == "Box")             return OpType::Box;
+    if (name == "Cylinder")        return OpType::Cylinder;
+    if (name == "Sphere")          return OpType::Sphere;
+    if (name == "Cone")            return OpType::Cone;
+
+    // Booleans
+    if (name == "Union")           return OpType::Union;
+    if (name == "Cut")             return OpType::Cut;
+    if (name == "Intersect")       return OpType::Intersect;
+
+    // Modifiers/Transforms
+    if (name == "Shell")           return OpType::Shell;
+    if (name == "Fillet")          return OpType::Fillet;
+    if (name == "Translate")       return OpType::Translate;
+    if (name == "Rotate")          return OpType::Rotate;
+    if (name == "Scale")           return OpType::Scale;
+
+    return OpType::Box; // Default fallback
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        std::cerr << "Usage: stunad_test.exe \"<JSON_STRING>\"" << std::endl;
+        return 1;
+    }
+
+    try {
+        OcctKernel kernel;
+        GrammarExecutor executor;
+        GrammarProgram program;
+
+        // 1. Parse the JSON sent by Python/Web
+        auto data = nlohmann::json::parse(argv[1]);
+
+        // 2. Map JSON ops to your GrammarProgram
+        // This replaces the hardcoded g.CircleProfile, etc.
+    for (const auto& item : data["ops"]) {
+        Op op;
+        op.id = item["id"];
+        op.type = mapType(item["type"]);
+        
+        // References
+        op.refA = item.value("refA", "");
+        op.refB = item.value("refB", "");
+        
+        // List for Lofts (e.g., ["base", "mid", "top"])
+        if (item.contains("refList")) {
+            op.refList = item["refList"].get<std::vector<std::string>>();
+        }
+
+        // Parameters (e.g., [20.0, 10.0])
+        if (item.contains("params")) {
+            op.params = item["params"].get<std::vector<double>>();
+        }
+
+        op.selectionRule = item.value("selectionRule", "");
+        
+        program.ops.push_back(op);
+    }
+
+        // 3. Execute exactly like before
+        std::shared_ptr<Solid> finalResult = executor.execute(program, kernel);
+
+        if (finalResult) {
+            // Use a generic name or one passed from JSON
+            kernel.ExportSTEP(finalResult.get(), "models/output.step");
+            std::cout << "SUCCESS" << std::endl;
+
+            StunadMesh* mesh = kernel.Tessellate(finalResult.get(),.2);
+
+            // 2. Clean up the mesh (important for web performance)
+            MeshPostProcess::DeduplicateVertices(*mesh);
+
+            // 3. Export to glTF (Web-ready)
+            // We name it 'output' which will create 'output.gltf'
+            if (ExportGLTF(*mesh, "models/output.gltf")) {
+                std::cout << "SUCCESS: output.gltf generated" << std::endl;
+            }
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
 int main() {
     try {
         OcctKernel kernel;
@@ -68,7 +215,7 @@ int main() {
 
 
 
-
+*/
 
 
 

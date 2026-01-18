@@ -114,18 +114,36 @@ bool ExportGLTF(const StunadMesh& mesh, const std::string& path)
     // 4. Accessors
     // ------------------------------------------------------------
 
-    auto AddAccessor = [&](int view, int componentType, int count, int type)
-    {
-        tinygltf::Accessor acc;
-        acc.bufferView = view;
-        acc.componentType = componentType;
-        acc.count = count;
-        acc.type = type;
-        model.accessors.push_back(acc);
-        return static_cast<int>(model.accessors.size() - 1);
-    };
+  auto AddAccessor = [&](int view, int componentType, int count, int type, 
+                       const std::vector<double>& minVal = {}, 
+                       const std::vector<double>& maxVal = {})
+{
+    tinygltf::Accessor acc;
+    acc.bufferView = view;
+    acc.componentType = componentType;
+    acc.count = count;
+    acc.type = type;
+    acc.minValues = minVal; // Added this
+    acc.maxValues = maxVal; // Added this
+    model.accessors.push_back(acc);
+    return static_cast<int>(model.accessors.size() - 1);
+};
 
-    int posAcc  = AddAccessor(posView,  TINYGLTF_COMPONENT_TYPE_FLOAT,   mesh.vertices.size(), TINYGLTF_TYPE_VEC3);
+    std::vector<double> minVals = { 1e30, 1e30, 1e30 };
+    std::vector<double> maxVals = { -1e30, -1e30, -1e30 };
+
+    for (const auto& p : positions) {
+        minVals[0] = std::min(minVals[0], (double)p.x);
+        minVals[1] = std::min(minVals[1], (double)p.y);
+        minVals[2] = std::min(minVals[2], (double)p.z);
+
+        maxVals[0] = std::max(maxVals[0], (double)p.x);
+        maxVals[1] = std::max(maxVals[1], (double)p.y);
+        maxVals[2] = std::max(maxVals[2], (double)p.z);
+    }
+
+// Use the new bounds in the accessor call
+    int posAcc = AddAccessor(posView, TINYGLTF_COMPONENT_TYPE_FLOAT, mesh.vertices.size(), TINYGLTF_TYPE_VEC3, minVals, maxVals);
     int normAcc = AddAccessor(normView, TINYGLTF_COMPONENT_TYPE_FLOAT,   normals.size(), TINYGLTF_TYPE_VEC3);
     int uvAcc   = AddAccessor(uvView,   TINYGLTF_COMPONENT_TYPE_FLOAT,   uvs.size(),  TINYGLTF_TYPE_VEC2);
     int idxAcc  = AddAccessor(idxView,  TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT, mesh.indices.size(), TINYGLTF_TYPE_SCALAR);
@@ -158,6 +176,16 @@ bool ExportGLTF(const StunadMesh& mesh, const std::string& path)
     model.scenes.push_back(scene);
     model.defaultScene = 0;
 
+    tinygltf::Material material;
+    material.name = "DefaultMaterial";
+    material.pbrMetallicRoughness.baseColorFactor = { 0.8, 0.8, 0.8, 1.0 }; // Light Gray
+    material.pbrMetallicRoughness.metallicFactor = 0.0;
+    material.pbrMetallicRoughness.roughnessFactor = 0.5;
+    model.materials.push_back(material);
+
+// 2. Link the Primitive to the Material
+// Ensure your primitive (the one with the attributes) points to material index 0
+    model.meshes[0].primitives[0].material = 0;
     // ------------------------------------------------------------
     // 7. Write file
     // ------------------------------------------------------------
