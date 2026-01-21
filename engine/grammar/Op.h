@@ -14,9 +14,14 @@ enum class OpType {
     ProfileTranslate,
     ProfileRotate,
     ProfileScale,
+    ProfileRotate3D,
 
     // Solids (3D intent)
     Loft,
+    Sweep,
+    Extrude,
+    Revolve,
+    Thicken,
 
 
 
@@ -50,6 +55,5 @@ struct Op {
     std::string refA;   // input A
     std::string refB;// input B (booleans)
     std::vector<std::string> refList;  //To handle multiple inputs like Loft 
-    std::string selectionRule;
     std::vector<double> params;
 };

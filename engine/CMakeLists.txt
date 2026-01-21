@@ -1,6 +1,5 @@
 add_library(stunad_engine STATIC
     occt/OcctKernel.cpp
-    nodes/LampNode.cpp
     occt/OcctTessellator.cpp 
     extra/MeshPostProcess.cpp
     extra/GltfExporter.cpp

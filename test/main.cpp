@@ -24,9 +24,9 @@ OpType mapType(const std::string& name) {
     if (name == "SplineProfile")   return OpType::SplineProfile;
 
     // Profile transforms
-    if (name == "ProfileTranslate") return OpType::ProfileTranslate;
-    if (name == "ProfileRotate")    return OpType::ProfileRotate;
-    if (name == "ProfileScale")     return OpType::ProfileScale;
+    if (name == "TranslateProfile") return OpType::ProfileTranslate;
+    if (name == "RotateProfile")    return OpType::ProfileRotate;
+    if (name == "ScaleProfile")     return OpType::ProfileScale;
 
     // Solids/Primitives
     if (name == "Loft")            return OpType::Loft;
@@ -34,6 +34,16 @@ OpType mapType(const std::string& name) {
     if (name == "Cylinder")        return OpType::Cylinder;
     if (name == "Sphere")          return OpType::Sphere;
     if (name == "Cone")            return OpType::Cone;
+    if (name == "Sweep")           return OpType::Sweep;
+    if (name == "Extrude")         return OpType::Extrude;
+    if (name == "Revolve")         return OpType::Revolve;
+    if (name == "Thicken")         return OpType::Thicken;
+    if (name == "RotateProfile3D")         return OpType::ProfileRotate3D;
+   
+
+
+
+
 
     // Booleans
     if (name == "Union")           return OpType::Union;
@@ -85,36 +95,49 @@ int main(int argc, char* argv[]) {
             op.params = item["params"].get<std::vector<double>>();
         }
 
-        op.selectionRule = item.value("selectionRule", "");
+        
         
         program.ops.push_back(op);
     }
 
-        // 3. Execute exactly like before
-        std::shared_ptr<Solid> finalResult = executor.execute(program, kernel);
+    //validate
+    GrammarValidator validator;
+    std::string error;
 
-        if (finalResult) {
-            // Use a generic name or one passed from JSON
-            kernel.ExportSTEP(finalResult.get(), "models/output.step");
-            std::cout << "SUCCESS" << std::endl;
-
-            StunadMesh* mesh = kernel.Tessellate(finalResult.get(),.2);
-
-            // 2. Clean up the mesh (important for web performance)
-            MeshPostProcess::DeduplicateVertices(*mesh);
-
-            // 3. Export to glTF (Web-ready)
-            // We name it 'output' which will create 'output.gltf'
-            if (ExportGLTF(*mesh, "models/output.gltf")) {
-                std::cout << "SUCCESS: output.gltf generated" << std::endl;
-            }
-        }
-
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+    if (!validator.validate(program, error)) {
+        printf(error.c_str());
         return 1;
     }
-    return 0;
+
+
+
+    // 4. Execute 
+    std::shared_ptr<Solid> finalResult = executor.execute(program, kernel);
+
+    if (finalResult) {
+        // Use a generic name or one passed from JSON
+        kernel.ExportSTEP(finalResult.get(), "models/output.step");
+        std::cout << "SUCCESS" << std::endl;
+
+        StunadMesh* mesh = kernel.Tessellate(finalResult.get(),.2);
+
+        // 2. Clean up the mesh (important for web performance)
+        MeshPostProcess::DeduplicateVertices(*mesh);
+
+        // 3. Export to glTF (Web-ready)
+        // We name it 'output' which will create 'output.gltf'
+        if (ExportGLTF(*mesh, "models/output.gltf")) {
+            std::cout << "SUCCESS: output.gltf generated" << std::endl;
+        }
+    }
+
+} catch (const std::exception& e) {
+    std::cerr << "Error: " << e.what() << std::endl;
+    return 1;
+}
+return 0;
+
+
 }
 
 

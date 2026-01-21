@@ -11,6 +11,6 @@ class Node
 public:
     std::vector<Parameter> params;
 
-    virtual Solid* Evaluate(Kernel& kernel) = 0;
+    virtual std::unique_ptr<Solid> Evaluate(Kernel& kernel) = 0;
     virtual ~Node() {}
 };

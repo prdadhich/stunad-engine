@@ -41,10 +41,13 @@ std::unique_ptr<Solid> GrammarExecutor::execute(
 
             case OpType::SplineProfile: {
                 std::vector<std::pair<double, double>> points;
-                for (size_t j = 0; j + 1 < op.params.size(); j += 2) {
-                    points.push_back({op.params[j], op.params[j + 1]});
+                // Extract points (leave first param)
+                for (size_t j = 1; j +1 < op.params.size() ; j += 2) {
+                    points.push_back({op.params[j], op.params[j+1]});
                 }
-                profileMap[op.id] = std::unique_ptr<Profile>(kernel.MakeSplineProfile(points));
+                // Last parameter is our isClosed flag
+                bool isClosed = (op.params[0] > 0.5); 
+                profileMap[op.id] = kernel.MakeSplineProfile(points, isClosed);
                 break;
             }
 
@@ -70,20 +73,99 @@ std::unique_ptr<Solid> GrammarExecutor::execute(
                 }
                 break;
 
-            // -------- 3D SOLIDS --------
+
+            case OpType::ProfileRotate3D: {
+                if (profileMap.count(op.refA)) {
+                    double angle = op.params[0];
+                    double ax = op.params[1];
+                    double ay = op.params[2];
+                    double az = op.params[3];
+
+                    profileMap[op.id] = kernel.RotateProfile3D(
+                        profileMap[op.refA].get(), 
+                        angle, 
+                        ax, ay, az
+                    );
+                    
+                    printf("[DEBUG] RotateProfile3D %s: Angle %.1f around axis(%.1f, %.1f, %.1f)\n", 
+                            op.id.c_str(), angle, ax, ay, az);
+                    }
+                    break;
+                }
+
+                    // -------- 3D SOLIDS --------
             case OpType::Loft: {
                 std::vector<Profile*> loftProfiles;
-                // Resolve string IDs from the refList
+                
+                // 1. Resolve string IDs from the refList
                 for (const std::string& pId : op.refList) {
                     if (profileMap.count(pId)) {
                         loftProfiles.push_back(profileMap[pId].get());
+                    } else {
+                        printf("[DEBUG] Loft: Could not find Profile ID: %s in profileMap\n", pId.c_str());
+                        fprintf(stderr, "[Executor] Warning: Loft op %s references missing profile %s\n", 
+                                op.id.c_str(), pId.c_str());
                     }
                 }
-                if (!loftProfiles.empty()) {
-                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.Loft(loftProfiles));
+
+                // 2. Extract the 'ruled' flag (passed as a double in params)
+                bool ruled = false; 
+                bool makeSolid = false;
+                if (!op.params.empty()) {
+                    ruled = (op.params[0] > 0.5); // 1.0 = ruled (straight), 0.0 = smooth
+                    makeSolid = (op.params[1] > 0.5); // 1 makeSolid 0 surface
+                }
+
+                // 3. Final safety check: OCCT Loft requires at least 2 profiles
+                if (loftProfiles.size() >= 2) {
+                    // Ownership transfer: Kernel returns unique_ptr, we move it into map
+                    solidMap[op.id] = kernel.Loft(loftProfiles, ruled,makeSolid);
                 }
                 else {
-                    fprintf(stderr, "[Executor] Loft Error: No valid profiles found for op %s\n", op.id.c_str());
+                    fprintf(stderr, "[Executor] Loft Error: Op %s requires at least 2 profiles (found %zu)\n", 
+                            op.id.c_str(), loftProfiles.size());
+                    return nullptr; // Fail early if geometry cannot be built
+                }
+                break;
+            }
+
+            case OpType::Sweep: {
+                bool makeSolid = false;
+                makeSolid = (op.params[0] > 0.5);
+                if (!op.params.empty()) {
+                    makeSolid = (op.params[0] > 0.5); // 1 makeSolid 0 surface
+                }
+                if (profileMap.count(op.refA) && profileMap.count(op.refB)) {
+                    // refA = Profile (cross-section), refB = Path (spine)
+                    solidMap[op.id] = kernel.Sweep(profileMap[op.refA].get(), profileMap[op.refB].get(),makeSolid);
+                }
+                else {
+                    fprintf(stderr, "[Executor] Sweep Error: Missing profile or path for op %s\n", op.id.c_str());
+                    return nullptr;
+                }
+                break;
+            }
+            case OpType::Extrude: {
+                if (profileMap.count(op.refA)) {
+                    double height = op.params[0];
+                    bool makeSolid = (op.params.size() > 1) ? (op.params[1] > 0.5) : true;
+                    solidMap[op.id] = kernel.Extrude(profileMap[op.refA].get(), height, makeSolid);
+                }
+                break;
+            }
+
+            case OpType::Revolve: {
+                if (profileMap.count(op.refA)) {
+                    double angle = op.params[0];
+                    bool makeSolid = (op.params.size() > 1) ? (op.params[1] > 0.5) : true;
+                    solidMap[op.id] = kernel.Revolve(profileMap[op.refA].get(), angle, makeSolid);
+                }
+                break;
+            }
+            case OpType::Thicken: {
+                if (solidMap.count(op.refA)) {
+                    double thickness = op.params[0];
+                    solidMap[op.id] = kernel.Thicken(solidMap[op.refA].get(), thickness);
                 }
                 break;
             }
@@ -111,25 +193,23 @@ std::unique_ptr<Solid> GrammarExecutor::execute(
                 }
                 break;
 
-            case OpType::Fillet:
+            case OpType::Fillet: {
                 if (solidMap.count(op.refA)) {
-                    // Logic for adaptive selection rule
-                    if (!op.selectionRule.empty()) {
-                        // This calls your new adaptive kernel method
-                        solidMap[op.id] = std::unique_ptr<Solid>(kernel.FilletByRule(
-                            solidMap[op.refA].get(), op.params[0], op.selectionRule));
-                    } else {
-                        // Standard fillet
-                        solidMap[op.id] = std::unique_ptr<Solid>(kernel.Fillet(
-                            solidMap[op.refA].get(), op.params[0]));
+                    double radius = op.params[0];
+                    // Read mode from params[1], default to 0 (All)
+                    FilletType mode = FilletType::All; 
+                    if (op.params.size() > 1) {
+                        mode = static_cast<FilletType>( (int)op.params[1] );
                     }
+                    
+                    solidMap[op.id] = kernel.FilletEdges(solidMap[op.refA].get(), radius, mode);
                 }
                 break;
+            }
 
             case OpType::Cut:
                 if (solidMap.count(op.refA) && solidMap.count(op.refB)) {
-                    solidMap[op.id] = std::unique_ptr<Solid>(kernel.BooleanCut(
-                        solidMap[op.refA].get(), solidMap[op.refB].get()));
+                    solidMap[op.id] = kernel.BooleanCut(solidMap[op.refA].get(), solidMap[op.refB].get());
                 }
                 break;
 
@@ -206,5 +286,12 @@ std::unique_ptr<Solid> GrammarExecutor::execute(
     // Get the last operation's solid. .get() returns the raw pointer.
     // Note: In a production environment, you might return the unique_ptr 
     // or ensure the Kernel manages the lifetime of this specific returned object.
-    return std::move(solidMap[program.ops.back().id]);
+    std::string lastId = program.ops.back().id;
+
+    if (solidMap.count(lastId)) {
+        return std::move(solidMap[lastId]);
+    } else {
+        fprintf(stderr, "[Executor] Error: Last operation %s did not produce a Solid.\n", lastId.c_str());
+        return nullptr;
+    }
 }

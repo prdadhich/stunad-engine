@@ -9,6 +9,7 @@
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -46,20 +47,26 @@
 #include <Standard_Handle.hxx>
 #include <iostream>
 #include <ShapeFix_Shape.hxx>
+#include < BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepPrimAPI_MakeRevol.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <memory>
+#include <cstdio>
 
-Solid* OcctKernel::MakeBox(double x, double y, double z)
+std::unique_ptr<Solid> OcctKernel::MakeBox(double x, double y, double z)
 {
     TopoDS_Shape box = BRepPrimAPI_MakeBox(x, y, z).Shape();
-    return new OcctSolid(box);
+    return std::make_unique<OcctSolid>(box);
 }
 
-Solid* OcctKernel::MakeCylinder(double r, double h)
+std::unique_ptr<Solid> OcctKernel::MakeCylinder(double r, double h)
 {
-    return new OcctSolid(BRepPrimAPI_MakeCylinder(r, h).Shape());
+    return std::make_unique<OcctSolid>(BRepPrimAPI_MakeCylinder(r, h).Shape());
 }
 
 
-Solid* OcctKernel::MakeSphere(double radius) {
+std::unique_ptr<Solid> OcctKernel::MakeSphere(double radius) {
     if (radius <= 1e-6) return nullptr;
 
     // Creates a sphere at the origin (0,0,0)
@@ -67,10 +74,10 @@ Solid* OcctKernel::MakeSphere(double radius) {
     maker.Build();
 
     if (!maker.IsDone()) return nullptr;
-    return new OcctSolid(maker.Shape());
+    return std::make_unique<OcctSolid>(maker.Shape());
 }
 
-Solid* OcctKernel::MakeCone(double radiusBottom, double radiusTop, double height) {
+std::unique_ptr<Solid>OcctKernel::MakeCone(double radiusBottom, double radiusTop, double height) {
     if (height <= 1e-6) return nullptr;
 
     // OCCT's MakeCone uses: Ax2 (axis), R1 (bottom), R2 (top), H (height)
@@ -79,26 +86,13 @@ Solid* OcctKernel::MakeCone(double radiusBottom, double radiusTop, double height
     maker.Build();
 
     if (!maker.IsDone()) return nullptr;
-    return new OcctSolid(maker.Shape());
+    return std::make_unique<OcctSolid>(maker.Shape());
 }
 
 
 
 
-Solid* OcctKernel::Fillet(Solid* s, double r)
-{
-    auto so = (OcctSolid*)s;
-    BRepFilletAPI_MakeFillet fillet(so->shape);
-
-    for (TopExp_Explorer ex(so->shape, TopAbs_EDGE); ex.More(); ex.Next())
-    {
-        fillet.Add(r, TopoDS::Edge(ex.Current()));
-    }
-
-    return new OcctSolid(fillet.Shape());
-}
-
-Solid* OcctKernel::Shell(Solid* s, double t)
+std::unique_ptr<Solid> OcctKernel::Shell(Solid* s, double t)
 {
     auto so = (OcctSolid*)s;
 
@@ -107,10 +101,13 @@ Solid* OcctKernel::Shell(Solid* s, double t)
 
     shell.MakeThickSolidByJoin(so->shape, faces, -t, 1e-3);
 
-    return new OcctSolid(shell.Shape());
+    return std::make_unique<OcctSolid>(shell.Shape());
 }
-Solid* OcctKernel::BooleanUnion(Solid* a, Solid* b) {
-    if (!a || !b) return a ? a : b;
+
+std::unique_ptr<Solid> OcctKernel::BooleanUnion(Solid* a, Solid* b) {
+    if (!a && !b) return nullptr;
+    if (!a) return std::make_unique<OcctSolid>(static_cast<OcctSolid*>(b)->shape);
+    if (!b) return std::make_unique<OcctSolid>(static_cast<OcctSolid*>(a)->shape);
 
     auto* sa = static_cast<OcctSolid*>(a);
     auto* sb = static_cast<OcctSolid*>(b);
@@ -121,10 +118,12 @@ Solid* OcctKernel::BooleanUnion(Solid* a, Solid* b) {
 
     if (!fuse.IsDone()) {
         std::cerr << "OCCT Union Error: Fuse failed." << std::endl;
-        return new OcctSolid(sa->shape); // Return original if fail
+        return std::make_unique<OcctSolid>(sa->shape); // Return original if fail
     }
 
-    return new OcctSolid(fuse.Shape());
+    TopoDS_Shape result = fuse.Shape();
+    HealInternal(result);
+    return std::make_unique<OcctSolid>(fuse.Shape());
 }
 
 
@@ -159,28 +158,44 @@ void OcctKernel::ExportSTEP(Solid* s, const char* path) {
     }
 }
 
-Solid* OcctKernel::BooleanCut(Solid* a, Solid* b) 
-{
-    auto sa = (OcctSolid*)a;
-    auto sb = (OcctSolid*)b;
-    TopoDS_Shape result = BRepAlgoAPI_Cut(sa->shape, sb->shape);
+std::unique_ptr<Solid> OcctKernel::BooleanCut(Solid* a, Solid* b) {
+    if (!a || !b) return a ? std::make_unique<OcctSolid>(static_cast<OcctSolid*>(a)->shape) : nullptr;
 
-    return new OcctSolid(result);
+    auto* sa = static_cast<OcctSolid*>(a);
+    auto* sb = static_cast<OcctSolid*>(b);
+
+    // Verify both are solids. If one is a shell (open profile loft), Booleans will likely fail.
+    if (sa->shape.ShapeType() != TopAbs_SOLID || sb->shape.ShapeType() != TopAbs_SOLID) {
+        printf("[Kernel] Warning: BooleanCut requires manifold solids. Input might be an open shell.\n");
+    }
+
+    BRepAlgoAPI_Cut cutter(sa->shape, sb->shape);
+    cutter.Build();
+
+    if (!cutter.IsDone()) return std::make_unique<OcctSolid>(sa->shape);
+    return std::make_unique<OcctSolid>(cutter.Shape());
 }
 
-Solid* OcctKernel::Loft(const std::vector<Profile*>& profiles) {
+std::unique_ptr<Solid> OcctKernel::Loft(const std::vector<Profile*>& profiles, bool ruled, bool makeSolid) {
     if (profiles.size() < 2) return nullptr;
 
-    // Standard_True, Standard_True ensures a solid, ruled (straight-edged) shape
-    BRepOffsetAPI_ThruSections loftMaker(Standard_True, Standard_False);
+    // Use the makeSolid flag to initialize the loft maker.
+    // Standard_True in the first param attempts to build a solid volume immediately.
+    BRepOffsetAPI_ThruSections loftMaker(makeSolid, ruled);
     
+    bool allClosed = true;
+
     for (Profile* p : profiles) {
         auto* op = static_cast<OcctProfile*>(p);
         if (!op || op->wire.IsNull()) continue;
 
-        // Keep your original wire healing logic
+        // 1. Ensure 3D curves exist for the wire (Critical for Splines)
         BRepLib::BuildCurves3d(op->wire);
-        op->wire.Closed(Standard_True);
+        
+        // 2. Update global closure status
+        if (!op->wire.Closed()) {
+            allClosed = false;
+        }
         
         loftMaker.AddWire(op->wire);
     }
@@ -192,16 +207,26 @@ Solid* OcctKernel::Loft(const std::vector<Profile*>& profiles) {
             return nullptr;
         }
 
-        // --- NEW: THE HEALER PASS ---
-        // We take the raw shape out of the maker
         TopoDS_Shape finalShape = loftMaker.Shape();
         
-        // We use the healer to fix twisted faces or non-manifold edges 
-        // that lofting polygons often creates.
+        // 3. THE HEALER PASS
+        // Heal before attempting to make a solid to fix twisted faces.
         HealInternal(finalShape); 
 
-        // Now return the stable container
-        return new OcctSolid(finalShape);
+        // 4. Force Solidification if intent is Solid but output is a Shell
+        // This happens if OCCT builds the faces but doesn't "sew" them into a volume automatically.
+        if (makeSolid && allClosed && finalShape.ShapeType() == TopAbs_SHELL) {
+            BRepBuilderAPI_MakeSolid solidMaker(TopoDS::Shell(finalShape));
+            if (solidMaker.IsDone()) {
+                finalShape = solidMaker.Solid();
+                // Optional: Heal again if solidification introduced new issues
+                HealInternal(finalShape); 
+            } else {
+                printf("[OcctKernel] Warning: Loft was closed but could not be made into a Solid.\n");
+            }
+        }
+
+        return std::make_unique<OcctSolid>(finalShape);
 
     } catch (...) {
         printf("[OcctKernel] Critical Exception in Loft\n");
@@ -209,7 +234,155 @@ Solid* OcctKernel::Loft(const std::vector<Profile*>& profiles) {
     }
 }
 
-Solid* OcctKernel::RotateSolid(Solid* s, double rx, double ry, double rz) {
+
+
+std::unique_ptr<Solid> OcctKernel::Sweep(Profile* profile, Profile* path, bool makeSolid) {
+    if (!profile || !path) return nullptr;
+
+    auto* occProfile = static_cast<OcctProfile*>(profile);
+    auto* occPath = static_cast<OcctProfile*>(path);
+
+    // Ensure 3D curves are built for the path spline
+    BRepLib::BuildCurves3d(occPath->wire);
+
+    TopoDS_Shape sectionShape = occProfile->wire;
+    if (makeSolid) {
+        BRepBuilderAPI_MakeFace faceMaker(occProfile->wire);
+        if (faceMaker.IsDone()) sectionShape = faceMaker.Face();
+    }
+
+    // Generate the sweep
+    BRepOffsetAPI_MakePipe pipeMaker(occPath->wire, sectionShape);
+    pipeMaker.Build();
+
+    if (!pipeMaker.IsDone()) return nullptr;
+    TopoDS_Shape result = pipeMaker.Shape();
+
+    // Force Solidification if it's still a shell
+    if (makeSolid && result.ShapeType() != TopAbs_SOLID) {
+        BRepBuilderAPI_MakeSolid solidMaker;
+        for (TopExp_Explorer exp(result, TopAbs_SHELL); exp.More(); exp.Next()) {
+            solidMaker.Add(TopoDS::Shell(exp.Current()));
+        }
+        if (solidMaker.IsDone()) result = solidMaker.Solid();
+    }
+
+    HealInternal(result);
+    return std::make_unique<OcctSolid>(result);
+}
+
+
+std::unique_ptr<Solid> OcctKernel::Revolve(Profile* p, double angleDeg, bool makeSolid) {
+    if (!p) return nullptr;
+    auto* occP = static_cast<OcctProfile*>(p);
+
+    TopoDS_Shape profileToRevolve = occP->wire;
+
+    // If solid is requested, promote the Wire to a Face
+    if (makeSolid) {
+        BRepBuilderAPI_MakeFace faceMaker(occP->wire);
+        if (faceMaker.IsDone()) {
+            profileToRevolve = faceMaker.Face();
+        }
+    }
+
+    // Revolve directly around the Z-axis
+    // The user/AI is now responsible for ensuring the profile is "standing up" via RotateProfile3D
+    gp_Ax1 axis(gp::Origin(), gp::DZ());
+    BRepPrimAPI_MakeRevol revol(profileToRevolve, axis, angleDeg * M_PI / 180.0);
+    revol.Build();
+
+    if (!revol.IsDone()) return nullptr;
+    TopoDS_Shape result = revol.Shape();
+
+    // Solidify if necessary
+    if (makeSolid && result.ShapeType() != TopAbs_SOLID) {
+        BRepBuilderAPI_MakeSolid solidMaker;
+        for (TopExp_Explorer exp(result, TopAbs_SHELL); exp.More(); exp.Next()) {
+            solidMaker.Add(TopoDS::Shell(exp.Current()));
+        }
+        if (solidMaker.IsDone()) result = solidMaker.Solid();
+    }
+
+    HealInternal(result);
+    return std::make_unique<OcctSolid>(result);
+}
+
+std::unique_ptr<Solid> OcctKernel::Extrude(Profile* p, double height, bool makeSolid) {
+    if (!p) return nullptr;
+    auto* occP = static_cast<OcctProfile*>(p);
+
+    // Ensure the wire is valid and closed
+    if (occP->wire.IsNull()) return nullptr;
+
+    TopoDS_Shape profileToExtrude = occP->wire;
+
+    // MANDATORY: For a solid result, we must extrude a FACE
+    if (makeSolid && occP->wire.Closed()) {
+        BRepBuilderAPI_MakeFace faceMaker(occP->wire);
+        if (faceMaker.IsDone()) {
+            profileToExtrude = faceMaker.Face();
+        }
+    }
+
+    gp_Vec vec(0.0, 0.0, height);
+    BRepPrimAPI_MakePrism prism(profileToExtrude, vec);
+    prism.Build();
+
+    if (!prism.IsDone()) return nullptr;
+
+    TopoDS_Shape result = prism.Shape();
+    
+    // Sometimes for small heights, OCCT creates a Shell even from a Face.
+    // This forces it into a Solid object.
+    if (makeSolid && result.ShapeType() != TopAbs_SOLID) {
+        BRepBuilderAPI_MakeSolid solidMaker;
+        for (TopExp_Explorer exp(result, TopAbs_SHELL); exp.More(); exp.Next()) {
+            solidMaker.Add(TopoDS::Shell(exp.Current()));
+        }
+        if (solidMaker.IsDone()) result = solidMaker.Solid();
+    }
+
+    HealInternal(result);
+    return std::make_unique<OcctSolid>(result);
+}
+
+
+std::unique_ptr<Solid> OcctKernel::Thicken(Solid* s, double thickness) {
+    if (!s) return nullptr;
+    auto* occS = static_cast<OcctSolid*>(s);
+    
+    // Safety check: Thicken is usually performed on Shells/Surfaces.
+    // If it's already a solid, this will create an "offset" solid.
+    
+    Standard_Real tol = 1e-3;
+    BRepOffsetAPI_MakeThickSolid offsetMaker;
+    TopTools_ListOfShape closingFaces; // Empty list means thicken the whole shape
+    
+    try {
+        // -thickness creates an "outward" or "inward" offset depending on normals
+        offsetMaker.MakeThickSolidByJoin(occS->shape, closingFaces, thickness, tol);
+        offsetMaker.Build();
+
+        if (offsetMaker.IsDone()) {
+            TopoDS_Shape result = offsetMaker.Shape();
+            HealInternal(result);
+            return std::make_unique<OcctSolid>(result);
+        }
+    } catch (...) {
+        printf("[OcctKernel] Thicken failed for op.\n");
+    }
+    
+    return nullptr;
+}
+
+
+
+
+
+
+
+std::unique_ptr<Solid> OcctKernel::RotateSolid(Solid* s, double rx, double ry, double rz) {
     auto* occSolid = static_cast<OcctSolid*>(s);
     if (!occSolid) return nullptr;
     gp_Trsf trsf;
@@ -224,22 +397,22 @@ Solid* OcctKernel::RotateSolid(Solid* s, double rx, double ry, double rz) {
     trsf = rotZ * (rotY * rotX);
 
     BRepBuilderAPI_Transform transformer(occSolid->shape, trsf);
-    return new OcctSolid(transformer.Shape());
+    return std::make_unique<OcctSolid>(transformer.Shape());
 }
 
-Solid* OcctKernel::ScaleSolid(Solid* s, double factor) {
+std::unique_ptr<Solid> OcctKernel::ScaleSolid(Solid* s, double factor) {
     auto* occSolid = static_cast<OcctSolid*>(s);
     if (!occSolid) return nullptr;
-    if (factor <= 0) return new OcctSolid(occSolid->shape);
+    if (factor <= 0) return std::make_unique<OcctSolid>(occSolid->shape);
 
     gp_Trsf trsf;
     trsf.SetScale(gp::Origin(), factor);
 
     BRepBuilderAPI_Transform transformer(occSolid->shape, trsf);
-    return new OcctSolid(transformer.Shape());
+    return std::make_unique<OcctSolid>(transformer.Shape());
 }
 
-Solid* OcctKernel::BooleanIntersect(Solid* a, Solid* b) {
+std::unique_ptr<Solid> OcctKernel::BooleanIntersect(Solid* a, Solid* b) {
     if (!a || !b) return nullptr;
 
     auto* sa = static_cast<OcctSolid*>(a);
@@ -249,14 +422,14 @@ Solid* OcctKernel::BooleanIntersect(Solid* a, Solid* b) {
     common.Build();
 
     if (!common.IsDone()) {
-        return new OcctSolid(sa->shape); 
+        return std::make_unique<OcctSolid>(sa->shape); 
     }
 
-    return new OcctSolid(common.Shape());
+    return std::make_unique<OcctSolid>(common.Shape());
 }
 
 
-Solid* OcctKernel::ScaleSolidNonUniform(Solid* s, double sx, double sy, double sz) {
+std::unique_ptr<Solid> OcctKernel::ScaleSolidNonUniform(Solid* s, double sx, double sy, double sz) {
     auto* occSolid = static_cast<OcctSolid*>(s);
     
     if (!occSolid || occSolid->shape.IsNull()) {
@@ -271,10 +444,10 @@ Solid* OcctKernel::ScaleSolidNonUniform(Solid* s, double sx, double sy, double s
    BRepBuilderAPI_GTransform transformer(occSolid->shape, gtrsf);
     
     if (!transformer.IsDone()) {
-        return new OcctSolid(occSolid->shape);
+        return std::make_unique<OcctSolid>(occSolid->shape);
     }
 
-    return new OcctSolid(transformer.Shape());
+    return std::make_unique<OcctSolid>(transformer.Shape());
 }
 
 
@@ -300,15 +473,15 @@ StunadMesh* OcctKernel::Tessellate(Solid* solid, float deflection)
 
 //profiles
 
-Profile* OcctKernel::MakeCircleProfile(double r) {
-    auto* op = new OcctProfile(r);
+std::unique_ptr<Profile> OcctKernel::MakeCircleProfile(double r) {
+    auto op = std::make_unique<OcctProfile>(r);
     gp_Circ circ(gp_Ax2(gp::Origin(), gp::DZ()), r);
     op->wire = BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(circ));
     return op;
 }
 
-Profile* OcctKernel::MakeRectProfile(double w, double h) {
-    auto* op = new OcctProfile(w, h);
+std::unique_ptr<Profile> OcctKernel::MakeRectProfile(double w, double h) {
+    auto op = std::make_unique<OcctProfile>(w, h);
     double hw = w / 2.0;
     double hh = h / 2.0;
     gp_Pnt p1(-hw, -hh, 0), p2(hw, -hh, 0), p3(hw, hh, 0), p4(-hw, hh, 0);
@@ -323,10 +496,10 @@ Profile* OcctKernel::MakeRectProfile(double w, double h) {
 }
 
 
-Profile* OcctKernel::MakePolygonProfile(const std::vector<std::pair<double, double>>& points) {
+std::unique_ptr<Profile> OcctKernel::MakePolygonProfile(const std::vector<std::pair<double, double>>& points) {
     if (points.size() < 3) return nullptr;
 
-    auto* op = new OcctProfile(ProfileKind::Polygon);
+    auto op = std::make_unique<OcctProfile>(ProfileKind::Polygon);
     BRepBuilderAPI_MakePolygon polyMaker;
     
     for (const auto& pt : points) {
@@ -349,33 +522,30 @@ Profile* OcctKernel::MakePolygonProfile(const std::vector<std::pair<double, doub
     return op;
 }
 
-Profile* OcctKernel::MakeSplineProfile(const std::vector<std::pair<double, double>>& points) {
-    // 1. Create the profile object with the generic constructor
-    auto* op = new OcctProfile(ProfileKind::Spline);
-
-    // 2. Prepare OCCT point array (OCCT arrays are 1-based)
+std::unique_ptr<Profile> OcctKernel::MakeSplineProfile(const std::vector<std::pair<double, double>>& points, bool isClosed) {
+    auto op = std::make_unique<OcctProfile>(ProfileKind::Spline);
     int n = static_cast<int>(points.size());
-    Handle(TColgp_HArray1OfPnt) occtPoints = new TColgp_HArray1OfPnt(1, n);
+    if (n < 2) return nullptr;
 
+    Handle(TColgp_HArray1OfPnt) occtPoints = new TColgp_HArray1OfPnt(1, n);
     for (int i = 0; i < n; ++i) {
         occtPoints->SetValue(i + 1, gp_Pnt(points[i].first, points[i].second, 0.0));
     }
 
-    // 3. Interpolate a periodic (closed) B-Spline
-    // Standard_True makes the curve close smoothly back to the start
-    GeomAPI_Interpolate interpolator(occtPoints, Standard_True, 1e-6);
+    // Standard_True makes it periodic (smoothly closed)
+    GeomAPI_Interpolate interpolator(occtPoints, isClosed, 1e-6);
     interpolator.Perform();
 
-    if (!interpolator.IsDone()) {
-        delete op;
-        return nullptr;
-    }
+    if (!interpolator.IsDone()) return nullptr;
 
-    // 4. Convert the Geometry to Topology (Wire)
     TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(interpolator.Curve());
     op->wire = BRepBuilderAPI_MakeWire(edge);
-    if (!op->wire.IsNull()) {
-    op->wire.Closed(Standard_True);
+    
+    if (isClosed) {
+        op->wire.Closed(Standard_True);
+        // Robustness: Try to make a face. Lofts between faces are more stable.
+        BRepBuilderAPI_MakeFace faceMaker(op->wire);
+        if (faceMaker.IsDone()) { /* Face generated internally */ }
     }
 
     return op;
@@ -383,9 +553,9 @@ Profile* OcctKernel::MakeSplineProfile(const std::vector<std::pair<double, doubl
 
 
 
-Profile* OcctKernel::RotateProfile(Profile* p, double angleDeg) {
+std::unique_ptr<Profile> OcctKernel::RotateProfile(Profile* p, double angleDeg) {
     auto* src = static_cast<OcctProfile*>(p);
-    auto* out = new OcctProfile(*src);
+    auto out = std::make_unique<OcctProfile>(*src);
 
     gp_Trsf trsf;
     // Rotate around the current Z-axis position of the profile
@@ -399,9 +569,9 @@ Profile* OcctKernel::RotateProfile(Profile* p, double angleDeg) {
     return out;
 }
 
-Profile* OcctKernel::ScaleProfile(Profile* p, double s) {
+std::unique_ptr<Profile> OcctKernel::ScaleProfile(Profile* p, double s) {
     auto* src = static_cast<OcctProfile*>(p);
-    auto* out = new OcctProfile(*src);
+    auto out = std::make_unique<OcctProfile>(*src);
 
     // 1. Update the metadata
     if (out->kind == ProfileKind::Circle) {
@@ -424,78 +594,101 @@ Profile* OcctKernel::ScaleProfile(Profile* p, double s) {
 
 
 
-Profile* OcctKernel::TranslateProfile(Profile* p, double x, double y, double z) {
-    auto* src = (OcctProfile*)p;
+std::unique_ptr<Profile> OcctKernel::TranslateProfile(Profile* p, double x, double y, double z) {
+    auto* src = static_cast<OcctProfile*>(p);
     
-    // Create a transformation matrix
     gp_Trsf trsf;
     trsf.SetTranslation(gp_Vec(x, y, z));
     
-    // Apply transformation to the wire
     BRepBuilderAPI_Transform transform(src->wire, trsf);
     
-    // Create new profile and store the transformed wire
-    auto* result = new OcctProfile(*src); // Use your copy constructor
+    auto result = std::make_unique<OcctProfile>(*src); 
     result->wire = TopoDS::Wire(transform.Shape());
-    result->wire.Closed(Standard_True);
+    
+    // Crucial: Update the logical center of the profile
+    result->x += x;
+    result->y += y;
+    result->z += z;
     
     return result;
 }
 
 
 
-Solid* OcctKernel::FilletByRule(Solid* s, double radius, const std::string& rule) {
+std::unique_ptr<Solid> OcctKernel::FilletEdges(Solid* s, double radius, FilletType mode) {
+    if (!s) return nullptr;
     auto* occSolid = static_cast<OcctSolid*>(s);
+    
+    if (radius < 1e-6) return std::make_unique<OcctSolid>(occSolid->shape);
+
     BRepFilletAPI_MakeFillet filler(occSolid->shape);
     
-    bool foundAny = false;
-    TopExp_Explorer ex(occSolid->shape, TopAbs_EDGE);
+    // FIX 1: Use a Map to prevent adding the same edge twice
+    TopTools_IndexedMapOfShape edgeMap;
+    TopExp::MapShapes(occSolid->shape, TopAbs_EDGE, edgeMap);
     
-    while (ex.More()) {
-        TopoDS_Edge E = TopoDS::Edge(ex.Current());
-        
+    bool foundAny = false;
+
+    for (int i = 1; i <= edgeMap.Extent(); ++i) {
+        TopoDS_Edge E = TopoDS::Edge(edgeMap(i));
         bool shouldFillet = false;
 
-        // --- RULE ENGINE ---
-        if (rule == "all_edges") {
+        if (mode == FilletType::All) { // All
             shouldFillet = true;
         } 
-        else if (rule == "vertical_edges") {
-            // Logic: Check if edge direction is parallel to Z-axis
+        else {
             Standard_Real first, last;
             Handle(Geom_Curve) curve = BRep_Tool::Curve(E, first, last);
-            if (!curve.IsNull() && curve->IsKind(STANDARD_TYPE(Geom_Line))) {
-                gp_Dir dir = Handle(Geom_Line)::DownCast(curve)->Lin().Direction();
-                if (dir.IsParallel(gp::DZ(), 0.1)) shouldFillet = true;
+            if (!curve.IsNull()) {
+                gp_Pnt pStart = curve->Value(first);
+                gp_Pnt pEnd = curve->Value(last);
+                
+                double dz = std::abs(pStart.Z() - pEnd.Z());
+                double dxy = std::sqrt(std::pow(pStart.X() - pEnd.X(), 2) + 
+                                       std::pow(pStart.Y() - pEnd.Y(), 2));
+
+                // Mode 1: Vertical Ribs
+                // Check: dz is significant AND dxy is effectively zero (or much smaller than dz)
+                if (mode == FilletType::Vertical && dz > 1e-3 && dxy < 1e-3) {
+                    shouldFillet = true;
+                } 
+                // Mode 2: Planar Caps
+                // Check: Start and End points are on the same Z plane
+                else if (mode == FilletType::Planar && dz < 1e-4) {
+                    shouldFillet = true;
+                }
             }
-        }
-        else if (rule == "horizontal_edges") {
-             Standard_Real first, last;
-             Handle(Geom_Curve) curve = BRep_Tool::Curve(E, first, last);
-             if (!curve.IsNull() && curve->IsKind(STANDARD_TYPE(Geom_Line))) {
-                gp_Dir dir = Handle(Geom_Line)::DownCast(curve)->Lin().Direction();
-                if (std::abs(dir.Z()) < 0.1) shouldFillet = true;
-             }
         }
 
         if (shouldFillet) {
-            filler.Add(radius, E);
-            foundAny = true;
+            try {
+                filler.Add(radius, E);
+                foundAny = true;
+            } catch (...) {
+                // Individual edge might fail if radius is too large for its length
+                continue; 
+            }
         }
-        ex.Next();
     }
 
-    if (!foundAny) return new OcctSolid(occSolid->shape);
+    if (!foundAny) return std::make_unique<OcctSolid>(occSolid->shape);
 
-    filler.Build();
-    if (filler.IsDone()) {
-        return new OcctSolid(filler.Shape());
+    try {
+        filler.Build();
+        if (filler.IsDone()) {
+            TopoDS_Shape result = filler.Shape();
+            HealInternal(result); 
+            return std::make_unique<OcctSolid>(result);
+        } else {
+            printf("[OcctKernel] Fillet failed: check radius size against edge lengths.\n");
+        }
+    } catch (...) {
+        printf("[OcctKernel] Fillet Build Critical Failure\n");
     }
-    return new OcctSolid(occSolid->shape);
+
+    return std::make_unique<OcctSolid>(occSolid->shape);
 }
-
-
-Solid* OcctKernel::TranslateSolid(Solid* s, double dx, double dy, double dz) {
+std::unique_ptr<Solid> OcctKernel::TranslateSolid(Solid* s, double dx, double dy, double dz) {
     auto* occSolid = static_cast<OcctSolid*>(s);
     
     gp_Trsf trsf;
@@ -503,11 +696,11 @@ Solid* OcctKernel::TranslateSolid(Solid* s, double dx, double dy, double dz) {
     
     BRepBuilderAPI_Transform transformer(occSolid->shape, trsf);
     if (transformer.IsDone()) {
-        return new OcctSolid(transformer.Shape());
+        return std::make_unique<OcctSolid>(transformer.Shape());
     }
     
     // Fallback: return original if transform fails
-    return new OcctSolid(occSolid->shape);
+    return std::make_unique<OcctSolid>(occSolid->shape);
 }
 
 
@@ -537,3 +730,27 @@ bool OcctKernel::HealInternal(TopoDS_Shape& shape) {
 
 
 
+std::unique_ptr<Profile> OcctKernel::RotateProfile3D(Profile* p, double angleDeg, double ax, double ay, double az) {
+    auto* src = static_cast<OcctProfile*>(p);
+    if (!src || src->wire.IsNull()) return nullptr;
+
+    // 1. Create the rotation axis (origin + direction vector)
+    // We rotate around the profile's current logical center
+    gp_Pnt center(src->x, src->y, src->z);
+    gp_Dir direction(ax, ay, az);
+    gp_Ax1 rotationAxis(center, direction);
+
+    // 2. Define the transformation
+    gp_Trsf trsf;
+    trsf.SetRotation(rotationAxis, angleDeg * M_PI / 180.0);
+
+    // 3. Apply transformation to a copy of the wire
+    BRepBuilderAPI_Transform transformer(src->wire, trsf);
+    
+    auto result = std::make_unique<OcctProfile>(*src);
+    result->wire = TopoDS::Wire(transformer.Shape());
+
+    // Note: Since this is a 3D rotation, the 2D 'rotDeg' metadata 
+    // might become ambiguous, but the wire itself is now correctly oriented.
+    return result;
+}
