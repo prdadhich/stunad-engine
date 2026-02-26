@@ -14,6 +14,72 @@
 
 
 
+#include "design/intent/FlowChannelIntent.h"
+#include "design/resolver/FlowChannelResolver.h"
+
+/*
+
+int main() {
+    FlowChannelIntent intent;
+    intent.flowRate = 2.0;
+    intent.maxPressureDrop = 0.5;
+    intent.length = 100.0;
+    intent.priority = FlowPriority::CompactPacking;
+
+    FlowChannelResolver resolver;
+    GrammarProgram program = resolver.resolve(intent);
+    std::string error;
+    GrammarValidator validator;
+    if (!validator.validate(program,error)) {
+        printf("validation errro");
+        return -1;
+    }
+
+    OcctKernel kernel;
+    GrammarExecutor executor;
+    std::shared_ptr<Solid> finalResult = executor.execute(program, kernel);
+
+
+    if (finalResult) {
+            // Use a generic name or one passed from JSON
+            kernel.ExportSTEP(finalResult.get(), "models/output.step");
+            std::cout << "SUCCESS" << std::endl;
+
+            StunadMesh* mesh = kernel.Tessellate(finalResult.get(),.2);
+
+            // 2. Clean up the mesh (important for web performance)
+            MeshPostProcess::DeduplicateVertices(*mesh);
+
+            // 3. Export to glTF (Web-ready)
+            // We name it 'output' which will create 'output.gltf'
+            if (ExportGLTF(*mesh, "models/output.gltf")) {
+                std::cout << "SUCCESS: output.gltf generated" << std::endl;
+            }
+        }
+
+
+
+    return 0;
+}
+
+
+
+
+
+*/
+
+
+
+
+
+
+
+
+
+
+//working headles with ai text prompt commented to test intent resolver workflow 
+
+
 using json = nlohmann::json;
 
 OpType mapType(const std::string& name) {
@@ -39,9 +105,8 @@ OpType mapType(const std::string& name) {
     if (name == "Revolve")         return OpType::Revolve;
     if (name == "Thicken")         return OpType::Thicken;
     if (name == "RotateProfile3D")         return OpType::ProfileRotate3D;
-   
-
-
+    if (name == "SetProfilePlane")    return OpType::ProfileSetPlane;    
+    if (name == "AlignProfileToPath") return OpType::AlignProfileToPath; 
 
 
 
@@ -53,6 +118,12 @@ OpType mapType(const std::string& name) {
     // Modifiers/Transforms
     if (name == "Shell")           return OpType::Shell;
     if (name == "Fillet")          return OpType::Fillet;
+    if (name == "Mirror")          return OpType::Mirror;           
+    if (name == "PatternLinear")   return OpType::PatternLinear;    
+    if (name == "PatternCircular") return OpType::PatternCircular; 
+    if (name == "PatternSpiral") return OpType::PatternSpiral;  
+
+
     if (name == "Translate")       return OpType::Translate;
     if (name == "Rotate")          return OpType::Rotate;
     if (name == "Scale")           return OpType::Scale;

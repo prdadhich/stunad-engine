@@ -58,19 +58,23 @@ public:
     virtual std::unique_ptr<Profile> MakePolygonProfile(const std::vector<std::pair<double, double>>& points)= 0;
     virtual std::unique_ptr<Profile> MakeSplineProfile(const std::vector<std::pair<double, double>>& points,bool isClosed) = 0;
     virtual std::unique_ptr<Profile> RotateProfile3D(Profile* p, double angleDeg, double ax, double ay, double az)  = 0 ;
+    virtual std::unique_ptr<Profile> SetProfilePlane(Profile* p, double originX, double originY, double originZ, double dirX, double dirY, double dirZ) = 0;
+    virtual std::unique_ptr<Profile> AlignProfileToPath(Profile* profile, Profile* path) = 0;
 
 
     virtual std::unique_ptr<Profile> TranslateProfile(Profile* p, double x, double y, double z) = 0;
     virtual std::unique_ptr<Profile> RotateProfile(Profile* p, double angleDeg) = 0;
     virtual std::unique_ptr<Profile> ScaleProfile(Profile* p, double s) = 0;
 
+
+    virtual std::unique_ptr<Solid> Mirror(Solid* s, double ox, double oy, double oz, double dx, double dy, double dz) = 0;
+
+    //pattern
+    virtual std::unique_ptr<Solid> PatternLinear(Solid* s, int count, double spacing, double dx, double dy, double dz) = 0;
+    virtual std::unique_ptr<Solid> PatternCircular(Solid* s, int count, double angleDeg, double ax, double ay, double az) = 0 ;
+    virtual std::unique_ptr<Solid> PatternSpiral(Solid* s, int count, double totalAngle, double totalRise, double ax, double ay, double az) = 0;
+
     
-    
-
-
-
-
-
 
    
 };

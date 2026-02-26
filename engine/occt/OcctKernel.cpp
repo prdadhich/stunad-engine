@@ -51,6 +51,9 @@
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <BRepAdaptor_CompCurve.hxx>
 #include <memory>
 #include <cstdio>
 
@@ -753,4 +756,140 @@ std::unique_ptr<Profile> OcctKernel::RotateProfile3D(Profile* p, double angleDeg
     // Note: Since this is a 3D rotation, the 2D 'rotDeg' metadata 
     // might become ambiguous, but the wire itself is now correctly oriented.
     return result;
+}
+
+
+
+
+
+
+std::unique_ptr<Profile> OcctKernel::SetProfilePlane(Profile* p, double originX, double originY, double originZ, double dirX, double dirY, double dirZ) 
+{
+    auto* src = static_cast<OcctProfile*>(p);
+    if (!src || src->wire.IsNull()) return nullptr;
+
+    // 1. Define the target coordinate system (Origin + Normal direction)
+    gp_Pnt origin(originX, originY, originZ);
+    gp_Dir normal(dirX, dirY, dirZ);
+    gp_Ax2 targetPlane(origin, normal);
+
+    // 2. Create the transformation from the default XY plane to the target plane
+    gp_Trsf trsf;
+    trsf.SetTransformation(targetPlane, gp::XOY()); 
+
+    // 3. Apply the transform
+    BRepBuilderAPI_Transform transformer(src->wire, trsf);
+    
+    auto result = std::make_unique<OcctProfile>(*src);
+    result->wire = TopoDS::Wire(transformer.Shape());
+
+    // Update logical center to match the new origin
+    result->x = originX;
+    result->y = originY;
+    result->z = originZ;
+
+    return result;
+}
+
+
+
+
+std::unique_ptr<Profile> OcctKernel::AlignProfileToPath(Profile* profile, Profile* path) {
+    auto* occProfile = static_cast<OcctProfile*>(profile);
+    auto* occPath = static_cast<OcctProfile*>(path);
+
+    if (!occProfile || !occPath || occPath->wire.IsNull()) return nullptr;
+
+    // 1. Use CompCurve instead of BRepAdaptor_Curve to handle TopoDS_Wire
+    BRepAdaptor_CompCurve adaptor(occPath->wire);
+    
+    // 2. Get the start point (P) and tangent (V) at the first parameter
+    gp_Pnt startPoint;
+    gp_Vec tangent;
+    
+    // FirstParameter() and LastParameter() work the same way for CompCurve
+    adaptor.D1(adaptor.FirstParameter(), startPoint, tangent);
+
+    // 3. Mathematical Safety
+    if (tangent.SquareMagnitude() < 1e-9) {
+        tangent = gp_Vec(0, 0, 1); 
+    }
+
+    // 4. Reuse your SetProfilePlane logic
+    return SetProfilePlane(profile, 
+                           startPoint.X(), startPoint.Y(), startPoint.Z(), 
+                           tangent.X(), tangent.Y(), tangent.Z());
+}
+
+
+
+// --- Mirroring ---
+std::unique_ptr<Solid> OcctKernel::Mirror(Solid* s, double ox, double oy, double oz, double dx, double dy, double dz) {
+    auto* occS = static_cast<OcctSolid*>(s);
+    gp_Ax2 mirrorPlane(gp_Pnt(ox, oy, oz), gp_Dir(dx, dy, dz));
+    gp_Trsf trsf;
+    trsf.SetMirror(mirrorPlane);
+    
+    BRepBuilderAPI_Transform transformer(occS->shape, trsf, Standard_True); // True = Copy
+    return std::make_unique<OcctSolid>(transformer.Shape());
+}
+
+// --- Patterning ---
+std::unique_ptr<Solid> OcctKernel::PatternLinear(Solid* s, int count, double spacing, double dx, double dy, double dz) {
+    auto* occS = static_cast<OcctSolid*>(s);
+    TopoDS_Shape result = occS->shape;
+    gp_Vec step(gp_Dir(dx, dy, dz));
+    step *= spacing;
+
+    for (int i = 1; i < count; ++i) {
+        gp_Trsf trsf;
+        trsf.SetTranslation(step * i);
+        BRepBuilderAPI_Transform transformer(occS->shape, trsf, Standard_True);
+        BRepAlgoAPI_Fuse fuse(result, transformer.Shape());
+        fuse.Build();
+        if (fuse.IsDone()) result = fuse.Shape();
+    }
+    return std::make_unique<OcctSolid>(result);
+}
+
+std::unique_ptr<Solid> OcctKernel::PatternCircular(Solid* s, int count, double angleDeg, double ax, double ay, double az) {
+    auto* occS = static_cast<OcctSolid*>(s);
+    TopoDS_Shape result = occS->shape;
+    gp_Ax1 axis(gp::Origin(), gp_Dir(ax, ay, az));
+
+    for (int i = 1; i < count; ++i) {
+        gp_Trsf trsf;
+        trsf.SetRotation(axis, (angleDeg * M_PI / 180.0) * i);
+        BRepBuilderAPI_Transform transformer(occS->shape, trsf, Standard_True);
+        BRepAlgoAPI_Fuse fuse(result, transformer.Shape());
+        fuse.Build();
+        if (fuse.IsDone()) result = fuse.Shape();
+    }
+    return std::make_unique<OcctSolid>(result);
+}
+
+
+
+std::unique_ptr<Solid> OcctKernel::PatternSpiral(Solid* s, int count, double totalAngle, double totalRise, double ax, double ay, double az) {
+    auto* occS = static_cast<OcctSolid*>(s);
+    TopoDS_Shape result = occS->shape;
+    
+    gp_Ax1 axis(gp::Origin(), gp_Dir(ax, ay, az));
+    double angleStep = (totalAngle * M_PI / 180.0) / (count - 1);
+    double riseStep = totalRise / (count - 1);
+    gp_Vec moveVec(gp_Dir(ax, ay, az));
+
+    for (int i = 1; i < count; ++i) {
+        gp_Trsf rot, trans;
+        rot.SetRotation(axis, angleStep * i);
+        trans.SetTranslation(moveVec * (riseStep * i));
+        
+        gp_Trsf finalTrsf = trans * rot;
+        
+        BRepBuilderAPI_Transform transformer(occS->shape, finalTrsf, Standard_True);
+        BRepAlgoAPI_Fuse fuse(result, transformer.Shape());
+        fuse.Build();
+        if (fuse.IsDone()) result = fuse.Shape();
+    }
+    return std::make_unique<OcctSolid>(result);
 }

@@ -153,6 +153,26 @@ std::unique_ptr<Solid> GrammarExecutor::execute(
                 }
                 break;
             }
+            
+            case OpType::ProfileSetPlane:
+                if (profileMap.count(op.refA)) {
+                    profileMap[op.id] = kernel.SetProfilePlane(
+                        profileMap[op.refA].get(),
+                        op.params[0], op.params[1], op.params[2], // Origin
+                        op.params[3], op.params[4], op.params[5]  // Normal
+                    );
+                }
+                break;
+
+
+            case OpType::AlignProfileToPath:
+                if (profileMap.count(op.refA) && profileMap.count(op.refB)) {
+                    profileMap[op.id] = kernel.AlignProfileToPath(
+                        profileMap[op.refA].get(), 
+                        profileMap[op.refB].get()
+                    );
+                }
+                break;
 
             case OpType::Revolve: {
                 if (profileMap.count(op.refA)) {
@@ -254,6 +274,53 @@ std::unique_ptr<Solid> GrammarExecutor::execute(
                         solidMap[op.refA].get(), solidMap[op.refB].get()));
                 }
                 break;
+
+
+                // Inside the switch(op.type) in GrammarExecutor::execute
+
+            case OpType::Mirror:
+                if (solidMap.count(op.refA)) {
+                    solidMap[op.id] = kernel.Mirror(solidMap[op.refA].get(), 
+                        op.params[0], op.params[1], op.params[2], // Plane Origin
+                        op.params[3], op.params[4], op.params[5]  // Plane Normal
+                    );
+                }
+                break;
+
+            case OpType::PatternLinear:
+                if (solidMap.count(op.refA)) {
+                    solidMap[op.id] = kernel.PatternLinear(solidMap[op.refA].get(), 
+                        (int)op.params[0], op.params[1], // count, spacing
+                        op.params[2], op.params[3], op.params[4] // direction
+                    );
+                }
+                break;
+
+            case OpType::PatternCircular:
+                if (solidMap.count(op.refA)) {
+                    solidMap[op.id] = kernel.PatternCircular(solidMap[op.refA].get(), 
+                        (int)op.params[0], op.params[1], // count, total angle
+                        op.params[2], op.params[3], op.params[4] // rotation axis
+                    );
+                }
+                break;
+
+
+                            
+
+            case OpType::PatternSpiral:
+                if (solidMap.count(op.refA)) {
+                    solidMap[op.id] = kernel.PatternSpiral(
+                        solidMap[op.refA].get(), 
+                        (int)op.params[0], // count
+                        op.params[1],      // totalAngle
+                        op.params[2],      // totalRise
+                        op.params[3], op.params[4], op.params[5] // rotation/rise axis
+                    );
+                }
+                break;
+
+                
 
         
         }

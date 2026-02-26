@@ -95,12 +95,14 @@ std::string GrammarBuilder::PolygonProfile(const std::vector<std::pair<double, d
 
 std::string GrammarBuilder::SplineProfile(const std::vector<std::pair<double, double>>& points, bool isClosed) {
     std::vector<double> flattened;
+    flattened.reserve(points.size() * 2 + 1);
+    flattened.push_back(isClosed ? 1.0 : 0.0); 
+
     for (const auto& p : points) {
         flattened.push_back(p.first);
         flattened.push_back(p.second);
     }
-    // Push the boolean as a double (1.0 or 0.0)
-    flattened.push_back(isClosed ? 1.0 : 0.0); 
+    
     
     return push(OpType::SplineProfile, "", "", flattened);
 }
@@ -165,6 +167,47 @@ std::string GrammarBuilder::RotateProfile3D(const std::string& profileId, double
     return push(OpType::ProfileRotate3D, profileId, "", { angleDeg, ax, ay, az });
 }
 
+
+std::string GrammarBuilder::SetProfilePlane(const std::string& profileId, const std::vector<double>& origin, const std::vector<double>& normal) 
+{
+    // params: [ox, oy, oz, dx, dy, dz]
+    std::vector<double> params = { origin[0], origin[1], origin[2], normal[0], normal[1], normal[2] };
+    return push(OpType::ProfileSetPlane, profileId, "", params);
+}
+
+std::string GrammarBuilder::AlignProfileToPath(const std::string& profileId, const std::string& pathId) {
+    return push(OpType::AlignProfileToPath, profileId, pathId, {});
+}
+
+
+std::string GrammarBuilder::Mirror(const std::string& solidId, 
+                                   const std::vector<double>& origin, 
+                                   const std::vector<double>& normal) {
+    // params: [ox, oy, oz, nx, ny, nz]
+    std::vector<double> params = { origin[0], origin[1], origin[2], normal[0], normal[1], normal[2] };
+    return push(OpType::Mirror, solidId, "", params);
+}
+
+std::string GrammarBuilder::PatternLinear(const std::string& solidId, int count, double spacing, 
+                                          const std::vector<double>& direction) {
+    // params: [count, spacing, dx, dy, dz]
+    std::vector<double> params = { (double)count, spacing, direction[0], direction[1], direction[2] };
+    return push(OpType::PatternLinear, solidId, "", params);
+}
+
+std::string GrammarBuilder::PatternCircular(const std::string& solidId, int count, double totalAngle, 
+                                            const std::vector<double>& axis) {
+    // params: [count, totalAngle, ax, ay, az]
+    std::vector<double> params = { (double)count, totalAngle, axis[0], axis[1], axis[2] };
+    return push(OpType::PatternCircular, solidId, "", params);
+}
+
+
+std::string GrammarBuilder::PatternSpiral(const std::string& solidId, int count, double totalAngle, double totalRise, const std::vector<double>& axis) {
+    // params: [count, totalAngle, totalRise, ax, ay, az]
+    std::vector<double> params = { (double)count, totalAngle, totalRise, axis[0], axis[1], axis[2] };
+    return push(OpType::PatternSpiral, solidId, "", params);
+}
 
 
 

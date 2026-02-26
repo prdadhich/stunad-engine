@@ -57,6 +57,17 @@ public:
     std::unique_ptr<Profile> RotateProfile(Profile* p, double angleDeg) override;
     std::unique_ptr<Profile> TranslateProfile(Profile* p, double x,double y , double z) override;
     std::unique_ptr<Profile> ScaleProfile(Profile* p, double s) override;
+    std::unique_ptr<Profile> SetProfilePlane(Profile* p, double originX, double originY, double originZ, double dirX, double dirY, double dirZ) override;
+    std::unique_ptr<Profile> AlignProfileToPath(Profile* profile, Profile* path) override;
+
+
+    //mirror
+    std::unique_ptr<Solid> Mirror(Solid* s, double ox, double oy, double oz, double dx, double dy, double dz) override;
+
+    //pattern
+    std::unique_ptr<Solid> PatternLinear(Solid* s, int count, double spacing, double dx, double dy, double dz) override;
+    std::unique_ptr<Solid> PatternCircular(Solid* s, int count, double angleDeg, double ax, double ay, double az) override;
+    std::unique_ptr<Solid> PatternSpiral(Solid* s, int count, double totalAngle, double totalRise, double ax, double ay, double az) override;
 
 private:
     bool HealInternal(TopoDS_Shape& shape);

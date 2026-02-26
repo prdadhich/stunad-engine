@@ -6,6 +6,9 @@ add_library(stunad_engine STATIC
     grammar/GrammarExecutor.cpp
     grammar/GrammarBuilder.cpp
     grammar/GrammarValidator.cpp
+    design/resolver/FlowChannelResolver.cpp
+    design/strategy/CircularChannelStrategy.cpp
+    design/strategy/RectangularChannelStrategy.cpp
     ${CMAKE_SOURCE_DIR}/external/tinygltf/tiny_gltf.cc
 )
 

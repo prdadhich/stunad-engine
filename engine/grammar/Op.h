@@ -25,7 +25,16 @@ enum class OpType {
 
 
 
+    //profileplane
+    ProfileSetPlane,
+    AlignProfileToPath,
 
+
+    //pattern
+    Mirror,
+    PatternLinear,
+    PatternCircular,
+    PatternSpiral,
 
     // Primitives
     Box,

@@ -125,6 +125,38 @@ bool GrammarValidator::validate(
                 break;
 
 
+
+                // Add to the switch statement in GrammarValidator.cpp
+
+            case OpType::ProfileSetPlane:
+                // 1. Ensure we have an input profile to move
+                if (op.refA.empty() || typeMap[op.refA] != ValueType::Profile) {
+                    error = "ProfileSetPlane " + op.id + " requires a valid Profile input (refA).";
+                    return false;
+                }
+
+                // 2. We expect exactly 6 parameters: [ox, oy, oz, dx, dy, dz]
+                if (op.params.size() != 6) {
+                    error = "ProfileSetPlane " + op.id + " requires 6 parameters: [origin(3), normal(3)].";
+                    return false;
+                }
+
+                // 3. Mathematical Safety: Ensure the normal vector is not zero
+                {
+                    double dx = op.params[3];
+                    double dy = op.params[4];
+                    double dz = op.params[5];
+                    if (std::sqrt(dx*dx + dy*dy + dz*dz) < 1e-6) {
+                        error = "ProfileSetPlane " + op.id + " has an invalid (zero) normal vector.";
+                        return false;
+                    }
+                }
+
+                // The result is still a Profile, just re-oriented in space
+                typeMap[op.id] = ValueType::Profile;
+                break;
+
+
             case OpType::Thicken:
             // refA = the shell to thicken, params[0] = thickness
                 if (typeMap[op.refA] != ValueType::Solid) { // Even surfaces are stored in solidMap
@@ -137,6 +169,65 @@ bool GrammarValidator::validate(
                 }
                 typeMap[op.id] = ValueType::Solid;
                 break;
+
+            case OpType::AlignProfileToPath:
+                if (typeMap[op.refA] != ValueType::Profile || typeMap[op.refB] != ValueType::Profile) {
+                    error = "AlignProfileToPath requires two Profile inputs.";
+                    return false;
+                }
+                typeMap[op.id] = ValueType::Profile;
+                break;
+
+
+
+            case OpType::Mirror:
+                if (typeMap[op.refA] != ValueType::Solid) {
+                    error = "Mirror requires a Solid input.";
+                    return false;
+                }
+                if (op.params.size() != 6) {
+                    error = "Mirror requires origin(3) and normal(3).";
+                    return false;
+                }
+                typeMap[op.id] = ValueType::Solid;
+                break;
+
+            case OpType::PatternLinear:
+            case OpType::PatternCircular:
+                if (typeMap[op.refA] != ValueType::Solid) {
+                    error = "Pattern requires a Solid input.";
+                    return false;
+                }
+                if (op.params[0] < 2) {
+                    error = "Pattern count must be at least 2.";
+                    return false;
+                }
+                // Check direction/axis vector magnitude
+                if (std::sqrt(op.params[2]*op.params[2] + op.params[3]*op.params[3] + op.params[4]*op.params[4]) < 1e-6) {
+                    error = "Pattern requires a non-zero direction/axis vector.";
+                    return false;
+                }
+                typeMap[op.id] = ValueType::Solid;
+                break;
+
+
+
+            case OpType::PatternSpiral:
+                if (typeMap[op.refA] != ValueType::Solid) {
+                    error = "PatternSpiral requires a Solid input.";
+                    return false;
+                }
+                if (op.params.size() != 6) {
+                    error = "PatternSpiral requires 6 params: [count, angle, rise, ax, ay, az].";
+                    return false;
+                }
+                if (op.params[0] < 2) {
+                    error = "PatternSpiral count must be at least 2.";
+                    return false;
+                }
+                typeMap[op.id] = ValueType::Solid;
+                break;
+
 
             
             case OpType::Shell:
