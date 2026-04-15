@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stunad Engine Studio - AI CAD Kernel</title>
+    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root {
+            --bg-color: #09090b;
+            --panel-bg: rgba(24, 24, 27, 0.7);
+            --panel-border: rgba(255, 255, 255, 0.1);
+            --accent: #6d28d9;
+            --accent-hover: #7c3aed;
+            --accent-glow: rgba(109, 40, 217, 0.5);
+            --text-main: #f4f4f5;
+            --text-muted: #a1a1aa;
+            --success: #10b981;
+            --error: #ef4444;
+        }
+
+        body { 
+            margin: 0; 
+            display: flex; 
+            height: 100vh; 
+            background: var(--bg-color); 
+            color: var(--text-main); 
+            font-family: 'Inter', sans-serif; 
+            overflow: hidden; 
+        }
+
+        /* Glassmorphism sidebar */
+        #sidebar { 
+            width: 360px; 
+            background: var(--panel-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-right: 1px solid var(--panel-border);
+            z-index: 10; 
+            display: flex;
+            flex-direction: column;
+            box-shadow: 10px 0 30px rgba(0,0,0,0.5);
+        }
+
+        .header {
+            padding: 24px;
+            border-bottom: 1px solid var(--panel-border);
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 100%);
+        }
+
+        h1 { 
+            font-size: 1.5rem;
+            font-weight: 800;
+            margin: 0; 
+            background: linear-gradient(90deg, #a78bfa, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+        
+        .subtitle {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+            font-weight: 300;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .scroll-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+        
+        .scroll-area::-webkit-scrollbar { width: 6px; }
+        .scroll-area::-webkit-scrollbar-track { background: transparent; }
+        .scroll-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+
+        .section-title { 
+            font-size: 0.85rem; 
+            color: var(--text-muted); 
+            margin: 24px 0 12px 0; 
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-title i { color: var(--accent); }
+
+        textarea {
+            width: 100%; 
+            height: 100px; 
+            background: rgba(0, 0, 0, 0.3); 
+            color: white; 
+            border: 1px solid var(--panel-border); 
+            border-radius: 8px; 
+            padding: 12px; 
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            resize: vertical; 
+            box-sizing: border-box;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        button { 
+            width: 100%; 
+            padding: 14px; 
+            background: var(--accent); 
+            border: 1px solid rgba(255,255,255,0.1); 
+            color: white; 
+            font-weight: 600; 
+            border-radius: 8px;
+            cursor: pointer; 
+            margin-top: 16px; 
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 4px 15px var(--accent-glow);
+        }
+        
+        button:hover { 
+            background: var(--accent-hover); 
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px var(--accent-glow);
+        }
+        
+        button:active {
+            transform: translateY(1px);
+        }
+
+        button.secondary {
+            background: rgba(255,255,255,0.05);
+            box-shadow: none;
+            border-color: rgba(255,255,255,0.1);
+        }
+        button.secondary:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        #status { 
+            margin-top: 20px; 
+            padding: 12px 16px; 
+            border-radius: 8px; 
+            font-size: 0.85em; 
+            background: rgba(0,0,0,0.3); 
+            border-left: 3px solid var(--text-muted);
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-success { border-left-color: var(--success) !important; color: var(--success); }
+        .status-error { border-left-color: var(--error) !important; color: var(--error); }
+        .status-loading { border-left-color: var(--accent) !important; color: #a78bfa; }
+
+        /* DAG Editor Styles */
+        .node-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .node-card {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+        
+        .node-header {
+            padding: 10px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            background: rgba(255,255,255,0.02);
+            font-size: 0.85rem;
+        }
+        
+        .node-header:hover { background: rgba(255,255,255,0.05); }
+        .node-type { font-weight: 600; color: #c084fc; }
+        .node-id { font-family: 'JetBrains Mono', monospace; color: var(--text-muted); font-size: 0.75rem;}
+        
+        .node-body {
+            padding: 12px;
+            border-top: 1px solid var(--panel-border);
+            display: none;
+            background: rgba(0,0,0,0.2);
+        }
+        
+        .node-card.active .node-body { display: block; }
+        .node-card.active { border-color: rgba(167, 139, 250, 0.5); }
+        
+        .param-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            gap: 10px;
+        }
+        .param-row:last-child { margin-bottom: 0; }
+        
+        .param-label {
+            width: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        
+        .param-slider {
+            flex: 1;
+            accent-color: var(--accent);
+        }
+        
+        .param-val {
+            width: 45px;
+            background: rgba(0,0,0,0.5);
+            border: 1px solid var(--panel-border);
+            color: white;
+            padding: 4px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            text-align: right;
+        }
+
+        #viewer-container {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle at center, #27272a 0%, #09090b 100%);
+        }
+
+        model-viewer { 
+            width: 100%; 
+            height: 100%; 
+        }
+
+        .loader {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 48px;
+            height: 48px;
+            border: 4px solid rgba(255,255,255,0.1);
+            border-bottom-color: var(--accent);
+            border-radius: 50%;
+            animation: rotation 1s linear infinite;
+            z-index: 100;
+        }
+        
+        .loader.active { display: block; }
+        @keyframes rotation { 0% { transform: translate(-50%, -50%) rotate(0deg); } 100% { transform: translate(-50%, -50%) rotate(360deg); } }
+
+        #graph-editor { display: none; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div class="header">
+            <h1>Stunad Studio</h1>
+            <div class="subtitle">AI-Powered Geometric Kernel</div>
+        </div>
+        
+        <div class="scroll-area">
+            <div class="section-title"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Architect</div>
+            <textarea id="aiPrompt" placeholder="Describe the part you want to build...&#10;e.g. 'Create a parametric helical gear with 12 teeth and a central shaft hole'"></textarea>
+            
+            <button onclick="askAI()">
+                <i class="fa-solid fa-microchip"></i> Generate History Graph
+            </button>
+            
+            <div id="status"><i class="fa-solid fa-circle-info"></i> System Ready</div>
+
+            <div id="graph-editor">
+                <div class="section-title"><i class="fa-solid fa-diagram-project"></i> Topological DAG</div>
+                <div id="node-container" class="node-list">
+                    <!-- Nodes will be injected here -->
+                </div>
+            </div>
+            
+            <div style="margin-top: 40px;">
+                <button class="secondary" onclick="downloadStep()">
+                    <i class="fa-solid fa-download"></i> Export STEP
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="viewer-container">
+        <div class="loader" id="loader"></div>
+        <model-viewer id="viewer" 
+            camera-controls 
+            auto-rotate 
+            shadow-intensity="1.5" 
+            shadow-softness="1"
+            environment-image="neutral" 
+            exposure="1.2" 
+            bounds="tight" 
+            camera-orbit="auto auto auto" 
+            src="">
+        </model-viewer>
+    </div>
+
+    <script>
+        // Set this to your active NGROK URL if hosting the frontend on Firebase (e.g. "https://1e82.ngrok.app")
+        // Leave it blank ("") if you are just opening index.html directly from your computer.
+        const NGROK_URL = ""; 
+        
+        const API_URL = NGROK_URL || "http://localhost:8000";
+        
+        const viewer = document.getElementById('viewer');
+        const statusBox = document.getElementById('status');
+        const loader = document.getElementById('loader');
+        const nodeContainer = document.getElementById('node-container');
+        const graphEditor = document.getElementById('graph-editor');
+        
+        let currentGraph = null;
+
+        function updateStatus(msg, type) {
+            statusBox.innerHTML = type === 'loading' ? `<i class="fa-solid fa-circle-notch fa-spin"></i> ${msg}` 
+                : type === 'success' ? `<i class="fa-solid fa-check"></i> ${msg}`
+                : type === 'error' ? `<i class="fa-solid fa-triangle-exclamation"></i> ${msg}`
+                : `<i class="fa-solid fa-circle-info"></i> ${msg}`;
+            statusBox.className = type ? `status-${type}` : '';
+            if (type === 'loading') loader.classList.add('active');
+            else loader.classList.remove('active');
+        }
+
+        async function refreshViewer() {
+            const modelUrl = `${API_URL}/models/output.gltf?t=${Date.now()}`;
+            try {
+                const res = await fetch(modelUrl, { headers: { 'ngrok-skip-browser-warning': 'true' } });
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                
+                viewer.src = url;
+                viewer.addEventListener('load', () => {
+                    viewer.cameraTarget = "auto auto auto";
+                    viewer.cameraOrbit = "auto auto auto";
+                    viewer.jumpCameraToGoal();
+                }, { once: true });
+
+                updateStatus("Model Rendered Successfully", "success");
+            } catch (e) {
+                updateStatus("Failed to render GLTF", "error");
+            }
+        }
+
+        async function askAI() {
+            const prompt = document.getElementById('aiPrompt').value;
+            if (!prompt) {
+                updateStatus("Please enter a description", "error");
+                return;
+            }
+
+            updateStatus("AI is generating topology...", "loading");
+            graphEditor.style.display = "none";
+            
+            try {
+                // Modified to send JSON natively to FastAPI
+                const response = await fetch(`${API_URL}/ai-prompt`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ prompt: prompt })
+                });
+                
+                const result = await response.json();
+                if (result.status === "success") {
+                    currentGraph = result.payload;
+                    buildEditor();
+                    await refreshViewer();
+                } else {
+                    updateStatus(result.message || "Engine Error", "error");
+                    console.error("C++ Ops:", result.output);
+                }
+            } catch (e) {
+                console.error("Fetch Exception:", e);
+                updateStatus("Connection Error to Backend", "error");
+            }
+        }
+
+        // --- DIRECT GRAPH MODIFICATION (DAG CACHING) ---
+        
+        async function updateGraphEvaluate() {
+            if (!currentGraph) return;
+            updateStatus("Recomputing Dirty Nodes...", "loading");
+            
+            try {
+                const response = await fetch(`${API_URL}/update-graph`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(currentGraph)
+                });
+                
+                const result = await response.json();
+                if (result.status === "success") {
+                    await refreshViewer();
+                } else {
+                    updateStatus(result.message || "Evaluation Failed", "error");
+                }
+            } catch (e) {
+                console.error("Graph Update Exception:", e);
+                updateStatus("Connection Error", "error");
+            }
+        }
+
+        // --- DYNAMIC UI BUILDER FOR GRAPH ---
+        
+        function buildEditor() {
+            if (!currentGraph || !currentGraph.ops) return;
+            nodeContainer.innerHTML = '';
+            graphEditor.style.display = 'block';
+
+            currentGraph.ops.forEach((op, index) => {
+                // Skip ops with no numeric params
+                if (!op.params || op.params.length === 0) return;
+
+                const card = document.createElement('div');
+                card.className = 'node-card';
+                
+                const header = document.createElement('div');
+                header.className = 'node-header';
+                header.innerHTML = `<span class="node-type">${op.type}</span><span class="node-id">${op.id}</span>`;
+                header.onclick = () => card.classList.toggle('active');
+                
+                const body = document.createElement('div');
+                body.className = 'node-body';
+
+                // Build sliders for each param
+                op.params.forEach((val, pIdx) => {
+                    const row = document.createElement('div');
+                    row.className = 'param-row';
+                    
+                    const lbl = document.createElement('div');
+                    lbl.className = 'param-label';
+                    lbl.innerText = `P${pIdx}`;
+                    
+                    const numInp = document.createElement('input');
+                    numInp.className = 'param-val';
+                    numInp.type = 'number';
+                    numInp.value = val;
+                    numInp.step = val > 5 ? '1' : '0.1';
+                    
+                    const slider = document.createElement('input');
+                    slider.className = 'param-slider';
+                    slider.type = 'range';
+                    
+                    // Estimate decent range bounds
+                    let minRange = val < 0 ? val * 2 : 0;
+                    let maxRange = val === 0 ? 10 : Math.abs(val) * 3;
+                    if(op.type.includes("Rotate") || op.type.includes("Pattern")) maxRange = 360;
+                    
+                    slider.min = minRange;
+                    slider.max = maxRange;
+                    slider.step = numInp.step;
+                    slider.value = val;
+                    
+                    // Sync values and trigger Graph update
+                    const syncAndUpdate = (newVal) => {
+                        let parsed = parseFloat(newVal);
+                        slider.value = parsed;
+                        numInp.value = parsed;
+                        currentGraph.ops[index].params[pIdx] = parsed;
+                        
+                        // Debounce the graph eval to not spam the C++ daemon
+                        clearTimeout(window.evalTimer);
+                        window.evalTimer = setTimeout(updateGraphEvaluate, 300);
+                    };
+
+                    slider.oninput = (e) => syncAndUpdate(e.target.value);
+                    numInp.onchange = (e) => syncAndUpdate(e.target.value);
+
+                    row.appendChild(lbl);
+                    row.appendChild(slider);
+                    row.appendChild(numInp);
+                    body.appendChild(row);
+                });
+
+                card.appendChild(header);
+                card.appendChild(body);
+                nodeContainer.appendChild(card);
+            });
+        }
+
+        async function downloadStep() {
+            const url = `${API_URL}/models/output.step?t=${Date.now()}`;
+            try {
+                const response = await fetch(url, { headers: { 'ngrok-skip-browser-warning': 'true' } });
+                if (!response.ok) throw new Error("File not found");
+                const fileBlob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(fileBlob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = "stunad_model.step";
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(downloadUrl);
+                document.body.removeChild(a);
+            } catch (err) {
+                updateStatus("STEP Download Failed", "error");
+            }
+        }
+    </script>
+</body>
+</html>

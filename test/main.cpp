@@ -90,7 +90,7 @@ OpType mapType(const std::string& name) {
     if (name == "SplineProfile")   return OpType::SplineProfile;
 
     // Profile transforms
-    if (name == "TranslateProfile") return OpType::ProfileTranslate;
+    if (name == "TranslateProfile" || name == "ProfileTranslate") return OpType::ProfileTranslate;
     if (name == "RotateProfile")    return OpType::ProfileRotate;
     if (name == "ScaleProfile")     return OpType::ProfileScale;
 
@@ -132,83 +132,70 @@ OpType mapType(const std::string& name) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cerr << "Usage: stunad_test.exe \"<JSON_STRING>\"" << std::endl;
-        return 1;
-    }
+    // If we receive a command line argument, evaluate it directly and exit (for backwards compatibility if needed)
+    // Otherwise enter interactive mode
+    OcctKernel kernel;
+    GrammarExecutor executor;
+    
+    auto processJson = [&](const std::string& inputJson) {
+        try {
+            GrammarProgram program;
+            auto data = nlohmann::json::parse(inputJson);
 
-    try {
-        OcctKernel kernel;
-        GrammarExecutor executor;
-        GrammarProgram program;
+            for (const auto& item : data["ops"]) {
+                Op op;
+                op.id = item["id"];
+                op.type = mapType(item["type"]);
+                op.refA = item.value("refA", "");
+                op.refB = item.value("refB", "");
+                if (item.contains("refList")) op.refList = item["refList"].get<std::vector<std::string>>();
+                if (item.contains("params")) op.params = item["params"].get<std::vector<double>>();
+                program.ops.push_back(op);
+            }
 
-        // 1. Parse the JSON sent by Python/Web
-        auto data = nlohmann::json::parse(argv[1]);
+            GrammarValidator validator;
+            std::string error;
+            if (!validator.validate(program, error)) {
+                std::cout << "{\"status\": \"error\", \"message\": \"Validation error\"}" << std::endl;
+                return;
+            }
 
-        // 2. Map JSON ops to your GrammarProgram
-        // This replaces the hardcoded g.CircleProfile, etc.
-    for (const auto& item : data["ops"]) {
-        Op op;
-        op.id = item["id"];
-        op.type = mapType(item["type"]);
-        
-        // References
-        op.refA = item.value("refA", "");
-        op.refB = item.value("refB", "");
-        
-        // List for Lofts (e.g., ["base", "mid", "top"])
-        if (item.contains("refList")) {
-            op.refList = item["refList"].get<std::vector<std::string>>();
+            executor.updateGraph(program);
+            std::shared_ptr<Solid> finalResult = executor.evaluate(kernel);
+
+            if (finalResult) {
+                kernel.ExportSTEP(finalResult.get(), "models/output.step");
+                StunadMesh* mesh = kernel.Tessellate(finalResult.get(), .2);
+                MeshPostProcess::DeduplicateVertices(*mesh);
+                if (ExportGLTF(*mesh, "models/output.gltf")) {
+                    std::cout << "{\"status\": \"success\", \"message\": \"output.gltf generated\"}" << std::endl;
+                } else {
+                    std::cout << "{\"status\": \"error\", \"message\": \"Failed to export glTF\"}" << std::endl;
+                }
+                delete mesh;
+            } else {
+                std::cout << "{\"status\": \"error\", \"message\": \"Execution failed\"}" << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cout << "{\"status\": \"error\", \"message\": \"" << e.what() << "\"}" << std::endl;
         }
+    };
 
-        // Parameters (e.g., [20.0, 10.0])
-        if (item.contains("params")) {
-            op.params = item["params"].get<std::vector<double>>();
-        }
+    if (argc >= 2) {
+        processJson(argv[1]);
+        return 0;
+    }
 
+    // Interactive mode
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) continue;
+        if (line == "exit" || line == "quit") break;
         
-        
-        program.ops.push_back(op);
+        processJson(line);
     }
-
-    //validate
-    GrammarValidator validator;
-    std::string error;
-
-    if (!validator.validate(program, error)) {
-        printf(error.c_str());
-        return 1;
-    }
-
-
-
-    // 4. Execute 
-    std::shared_ptr<Solid> finalResult = executor.execute(program, kernel);
-
-    if (finalResult) {
-        // Use a generic name or one passed from JSON
-        kernel.ExportSTEP(finalResult.get(), "models/output.step");
-        std::cout << "SUCCESS" << std::endl;
-
-        StunadMesh* mesh = kernel.Tessellate(finalResult.get(),.2);
-
-        // 2. Clean up the mesh (important for web performance)
-        MeshPostProcess::DeduplicateVertices(*mesh);
-
-        // 3. Export to glTF (Web-ready)
-        // We name it 'output' which will create 'output.gltf'
-        if (ExportGLTF(*mesh, "models/output.gltf")) {
-            std::cout << "SUCCESS: output.gltf generated" << std::endl;
-        }
-    }
-
-} catch (const std::exception& e) {
-    std::cerr << "Error: " << e.what() << std::endl;
-    return 1;
-}
-return 0;
-
-
+    
+    return 0;
 }
 
 

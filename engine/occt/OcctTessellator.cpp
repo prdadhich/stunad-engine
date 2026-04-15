@@ -75,7 +75,7 @@ StunadMesh* OcctTessellator::Tessellate(OcctSolid* solid, float deflection)
            // v.uv       = { 0.0f, 0.0f }; 
             gp_Pnt p = triangulation->Node(i).Transformed(loc);
             v.position = { static_cast<float>(p.X()), static_cast<float>(p.Y()), static_cast<float>(p.Z()) };
-            v.normal   = { 0.0f, 0.0f, 0.0f }; // will fill later
+            v.normal   = { 0.0f, 0.0f, 0.0f }; 
             v.uv       = { 0.0f, 0.0f }; 
             mesh->vertices.push_back(v);
            // mesh->vertices.push_back({ (float)p.X(), (float)p.Y(), (float)p.Z() });

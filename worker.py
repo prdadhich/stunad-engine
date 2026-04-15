@@ -25,6 +25,9 @@ else:
 
 
 
+import asyncio
+import threading
+
 app = FastAPI()
 
 # Enable CORS so your Firebase site can talk to your laptop
@@ -35,11 +38,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# FIXED LINE: Added quotes around /models, ., and models
+
 release_path = r"C:\Pratyush\stunad-engine\build\test\Release"
 EXE_PATH = os.path.join(release_path, "stunad_test.exe")
 
-# Update the mount to look inside your build folder for the models
 models_path = os.path.join(release_path, "models")
 if not os.path.exists(models_path):
     os.makedirs(models_path)
@@ -47,6 +49,58 @@ if not os.path.exists(models_path):
 app.mount("/models", StaticFiles(directory=models_path), name="models")
 
 
+# --- ENGINE DAEMON MANAGER ---
+engine_process = None
+engine_lock = threading.Lock()
+
+def start_engine():
+    global engine_process
+    if engine_process is None or engine_process.poll() is not None:
+        print("[Python] Starting Stunad Engine Daemon...")
+        engine_process = subprocess.Popen(
+            [EXE_PATH],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, # Ignore stderr for readlines to avoid deadlocks
+            cwd=release_path,
+            text=True,
+            bufsize=1 # Line buffered
+        )
+
+start_engine()
+
+def evaluate_graph(payload):
+    global engine_process
+    with engine_lock:
+        start_engine() # ensure alive
+        json_str = json.dumps(payload)
+        
+        # Send to daemon
+        engine_process.stdin.write(json_str + "\n")
+        engine_process.stdin.flush()
+        
+        # Read lines until we hit a JSON response
+        output_log = ""
+        while True:
+            line = engine_process.stdout.readline()
+            if not line:
+                break
+            line = line.strip()
+            
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    resp = json.loads(line)
+                    return resp, output_log
+                except json.JSONDecodeError:
+                    pass
+            
+            # Not a json response, it's a log from C++ Printf
+            output_log += line + "\n"
+            print(f"[C++] {line}")
+
+        return {"status": "error", "message": "Engine crashed or closed"}, output_log
+
+# -----------------------------
 
 CAD_SYSTEM_PROMPT = """
 You are the AI Compiler for the Stunad Geometric Kernel. 
@@ -118,7 +172,6 @@ Your goal is to generate the most EFFICIENT and MATHEMATICALLY ACCURATE procedur
 """
 
 
-
 @app.post("/ai-prompt")
 async def ai_prompt(request: Request):
     data = await request.json()
@@ -132,22 +185,47 @@ async def ai_prompt(request: Request):
         # Clean the response text
         clean_json = response.text.replace('```json', '').replace('```', '').strip()
         payload = json.loads(clean_json)
+        
+        # Ensure it's wrapped in {"ops": [...]} for the C++ engine to parse correctly
+        if isinstance(payload, list):
+            payload = {"ops": payload}
+            
         print(f"DEBUG: AI generated this JSON: {json.dumps(payload, indent=2)}")
-        # Execute your C++ Kernel with the AI-generated JSON
-        result = subprocess.run(
-            [EXE_PATH, json.dumps(payload)],
-            capture_output=True, text=True,
-            cwd=release_path
-        )
-        print("C++ Standard Output:", result.stdout, flush=True)
-        print("C++ Errors (if any):", result.stderr, flush=True)
         
-        return {"status": "success", "payload": payload, "output": result.stdout}
+        # Execute your C++ Kernel with the AI-generated JSON on the daemon!
+        resp, output_log = evaluate_graph(payload)
         
+        return {"status": resp.get("status", "error"), "payload": payload, "output": output_log, "engine_message": resp.get("message", "")}
+        
+    except Exception as e:
+        print(f"!!! PYTHON ERROR: {str(e)}", flush=True)
+        return {"status": "error", "message": str(e)}
+
+@app.post("/update-graph")
+async def update_graph(request: Request):
+    """
+    Endpoint for frontend to send a partially modified graph JSON 
+    (where they just changed a parameter of one node).
+    The backend passes the full graph to the daemon, which diffs it and utilizes cached geometry!
+    """
+    try:
+        payload = await request.json()
+        print("\n--- GRAPH UPDATE REQUEST ---", flush=True)
+        
+        # Evaluate directly using the daemon without asking AI
+        resp, output_log = evaluate_graph(payload)
+        
+        return {"status": resp.get("status", "error"), "payload": payload, "output": output_log, "engine_message": resp.get("message", "")}
     except Exception as e:
         print(f"!!! PYTHON ERROR: {str(e)}", flush=True)
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    try:
+        # ws="none" stops the websocket library warnings, log_level="error" stops the 404 spam.
+        uvicorn.run(app, host="0.0.0.0", port=8000, ws="none", log_level="error")
+    finally:
+        # Clean up process on server exit
+        if engine_process:
+            engine_process.terminate()
